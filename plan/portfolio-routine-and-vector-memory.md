@@ -174,12 +174,159 @@ locally a user types `/trade routine`. The skill prose handles both — no separ
 
 ---
 
+## Cloud path: Vercel HTTPS proxy (slice 7.5 + 8)
+
+CFG-1 BLOCKED + CFG-4c FAIL together mean the cloud routine cannot hold `PINECONE_API_KEY`
+directly and cannot use a custom MCP connector with static bearer auth either. The
+sanctioned escape hatch is the proxy pattern outside the agent's security boundary
+([Anthropic — Securely deploying AI agents](https://platform.claude.com/docs/en/agent-sdk/secure-deployment)).
+We deploy a small Vercel HTTPS function that holds the Pinecone API key in its own env
+vars; routines reach it via `WebFetch`. This is the architecture stamped as **Path D** in
+`plan/cfg-verification-20260531.md` §Decision.
+
+### Topology
+
+```
+Cloud routine sandbox                Vercel function (proxy/)
+┌────────────────────────┐           ┌──────────────────────┐         Pinecone
+│ trade_memory.py        │           │ /upsert /query       │         (cloud,
+│   sees                 │  HTTPS    │ /list /fetch /delete │  SDK    serverless,
+│   PINECONE_PROXY_URL,  │ ────────► │                      │ ──────► integrated
+│   PINECONE_PROXY_TOKEN │  Bearer   │ holds                │         inference)
+│   → routes via urllib  │           │   PINECONE_API_KEY   │
+└────────────────────────┘           │   in Vercel env vars │
+                                     └──────────────────────┘
+```
+
+The routine sandbox never holds the Pinecone key. The proxy validates every payload
+against the same schema `trade_memory.py` writes — single source of truth pattern, same
+discipline as `trade_scoring.py` extraction.
+
+### `trade_memory.py` cloud-mode auto-detect
+
+`scripts/trade_memory.py` (slice 3a) ships with two env vars wired through the
+`VectorStore` constructor:
+
+| Var | When set | Behavior |
+|-----|----------|----------|
+| `PINECONE_PROXY_URL` | unset (local) | `VectorStore` uses the Pinecone Python SDK directly with `PINECONE_API_KEY` |
+| `PINECONE_PROXY_URL` + `PINECONE_PROXY_TOKEN` | both set (cloud) | `VectorStore` uses `urllib.request` to POST to `<url>/<op>` with `Authorization: Bearer <token>`; `PINECONE_API_KEY` is NOT read |
+
+The skill prose for `/trade routine` never branches on local-vs-cloud. The branching lives
+inside the script. This keeps skills portable and keeps the cloud-mode test surface small.
+
+### Proxy directory layout (slice 7.5 deliverable)
+
+```
+proxy/
+├── api/
+│   ├── upsert.py            # POST → validate → pinecone.upsert
+│   ├── query.py             # POST → validate → pinecone.query
+│   ├── list.py              # POST → validate → pinecone.list (with prefix)
+│   ├── fetch.py             # POST → validate → pinecone.fetch
+│   └── delete.py            # POST → validate → pinecone.delete
+├── _lib/
+│   ├── auth.py              # Constant-time bearer-token check
+│   ├── validate.py          # Pydantic schemas; namespace allowlist; ID regex; metadata key allowlist
+│   └── ratelimit.py         # Upstash Redis (free tier) per source IP
+├── requirements.txt         # pinecone>=5, pydantic, vercel
+├── vercel.json              # Function config; declares env vars
+└── README.md                # Deploy + URL/token registration + rotation procedure
+```
+
+Validation helpers in `_lib/validate.py` **import the Pydantic schemas from
+`scripts/trade_schemas.py`** (created in slice 3a — see §Files-to-CREATE) so the schema
+enforced at the proxy boundary stays in lockstep with what the producer writes. Because
+the Vercel deployment has no `scripts/` directory by default, the proxy's `vercel.json`
+must declare `scripts/trade_schemas.py` via the `includeFiles` configuration and add
+`scripts/` to the function's `PYTHONPATH` (or copy the file into `proxy/_lib/` at deploy
+time — choose one and document in `proxy/README.md`; D.19 catches drift regardless).
+
+### Endpoint surface — minimal, lockdown-focused
+
+| Endpoint | Accepts | Rejects |
+|----------|---------|---------|
+| `POST /upsert` | `{namespace, records: [{id, values?, metadata, text}]}`, namespace ∈ allowlist (`trade` + any registered consumer namespace), id matches `^[A-Z0-9.\-]+:[A-Z]+:\d{8}-\d{4}:[a-z0-9-]+:\d+$`, metadata keys ⊆ Consumer Integration schema, max 100 records/call | Other namespaces; malformed IDs; unknown metadata keys; payloads > 500 KB |
+| `POST /query` | `{namespace, vector OR text, top_k ≤ 50, filter?}` | Other namespaces; top_k > 50; filters referencing unknown fields |
+| `POST /list` | `{namespace, prefix, limit ≤ 1000}` | Other namespaces; missing prefix (forces lexical scope) |
+| `POST /fetch` | `{namespace, ids: [...]}` ≤ 100 ids | Other namespaces; ids list > 100 |
+| `POST /delete` | `{namespace, ids OR filter, confirm: "yes"}` | Other namespaces; missing `confirm` field; bulk delete without explicit confirm |
+
+**Integrated-inference forwarding (`/upsert` branch).** The proxy switches its downstream
+Pinecone call by record shape. Records with `text` set and `values` absent are forwarded
+via `Index.upsert_records()` (server-side embedding by `llama-text-embed-v2`). Records
+with `values` populated are forwarded via `Index.upsert()` (caller-supplied embeddings).
+The producer plan's record schema is `text`-only — `values` is omitted — so the
+`upsert_records()` path is the default. The `values?` field in the accept schema exists
+only to keep the proxy useful for future callers that pre-embed (e.g., a consumer doing
+its own embeddings for testing). An implementer who only wires `Index.upsert()` will
+silently break the main ingestion path.
+
+This lockdown surface is what makes the auth model acceptable: even if the bearer token
+leaks, an attacker can only write schema-valid records to allowed namespaces, not exfiltrate
+arbitrary data or wipe content without explicit confirmation.
+
+### Auth model — 5 layers, bounded-blast-radius
+
+Routines have no secret store, so any bearer the routine presents lives in the prompt (a
+not-secret-grade location). The v0 model that makes this acceptable for a research tool:
+
+1. **High-entropy URL.** Deploy under a random subdomain (e.g. `https://pcp-9k2x7zm4w1.vercel.app`).
+   Not enumerable; rotate quarterly.
+2. **Bearer token in routine prompt.** 32-char random (`openssl rand -hex 32`). Stored in
+   Vercel env var `PROXY_AUTH_TOKEN`; constant-time-compared at the proxy. Rotate monthly.
+3. **Strict payload validation.** Per the endpoint table above. Schema lockdown is the
+   structural defense; defense-in-depth even against token compromise.
+4. **Upstash Redis rate limit.** Free tier; 100 req/min per source IP; bursts allowed.
+   Routine uses < 30 req/run; alert on > 200 req/min anomalies.
+5. **Rotation cadence.** Bearer monthly (5-min op: update Vercel env + edit routine prompt).
+   URL quarterly (re-deploy under new subdomain + edit routine prompt). Weekly log review
+   via `mcp__claude_ai_Vercel__get_runtime_logs`.
+
+**Token hygiene — `PINECONE_PROXY_TOKEN` is NOT a secret-grade location.** The bearer
+lives in the routine prompt body submitted via `/schedule` to the RemoteTrigger API.
+That prompt is not stored in a repo file by default — but the moment you put it in a
+deployment-helper script, a `.env` file, a notes markdown, or any artifact tracked by
+git, you have leaked it. Treat the token like a public-coordinates secret: safe places
+are Vercel's env-var UI and a local password manager; unsafe places are anything under
+the repo root, anything in `.claude/` (which gets rsync-mirrored per §3), any chat
+transcript, and any `.env` checked into git. The `proxy/README.md` deliverable (slice
+7.5) restates this with a "safe vs unsafe places" checklist so a future contributor
+re-creating the routine doesn't have to re-derive it.
+
+**Honest framing:** This is research-tool-grade auth, not production-grade. The README
+section authored in slice 9 says this verbatim so no future contributor mistakes it. The
+threat model it serves: solo developer, public-source data, rebuildable index via
+`trade_memory.py rebuild <drive-folder-id>`. Worst-case compromise = "rebuild the index
+from Drive" = ½ day inconvenience. It does NOT serve: production systems, PII, multi-tenant
+permissions, compliance regimes.
+
+### Cost
+
+Vercel free tier: 100 GB-hours/month function execution, 100 GB egress. Routine fires daily
+with < 30 requests/run, ~5s total compute/run = trivially below free tier. Upstash Redis
+free tier: 10K commands/day, plenty for the rate limiter. **Total expected: ~$0/month**
+for the proxy tier (Pinecone costs unchanged from §1 estimate of $0.15–$0.30/month).
+
+---
+
 ## Cloud feasibility gates (slice 0 — run before any code)
 
 These are **verification steps**, not design questions. Run them as one-shot
 `/schedule` routines. Each gate must come back green before slice 8 (cloud deployment) is
 implemented; slices 1–7 can proceed in parallel based on their own gates regardless of the
 CFG outcomes.
+
+**CFG-0 — Probe legitimacy.** Cloud routines apply prompt-injection guardrails using the
+contents of the cloned repo as context. Slice-0 probes need (a) their justification
+visible in committed repo files (not only in the routine prompt) and (b) prompts that
+do not request unnecessary recon, key fingerprints, or aggressive behavioral fencing
+(classic injection shapes). Discovered empirically during the first CFG-1 attempt
+(refused by the agent's guardrails on the grounds that no committed file authorized the
+"environment enumeration" step). The fix: commit `plan/` to `main` BEFORE firing any
+slice-0 routine, and narrow probes to the minimum signal needed. Established as a
+prerequisite for any future cloud-routine work in this repo. See
+`plan/cfg-verification-20260531.md` §CFG-0 for the verbatim refusal text and the lessons.
 
 **CFG-1 — Secret injection.** Create a one-shot routine that runs:
 ```bash
@@ -211,6 +358,7 @@ outcome.
 | Path | Purpose |
 |------|---------|
 | `scripts/trade_scoring.py` | Shared `score_grade()` + `trade_signal()` helpers. Imported by both `generate_trade_pdf.py` and `trade_memory.py`. Single source of truth for the 6-band table. |
+| `scripts/trade_schemas.py` | Pydantic schemas for the Pinecone record (metadata field allowlist, ID regex, namespace allowlist, signal/grade enums). Imported by `trade_memory.py` (write path), `proxy/_lib/validate.py` (proxy boundary), and the D.17 schema-contract gate. Single source of truth for the Consumer Integration contract. |
 | `scripts/trade_memory.py` | Standalone CLI memory engine over Pinecone, including the `recommend-tier` decision and Drive archive helpers |
 | `scripts/sync_claude_dir.sh` | Shell script mirroring `skills/` and `trade/` into `.claude/skills/` and additively syncing `agents/` into `.claude/agents/` (no `--delete` on agents, see §3) |
 | `.claude/skills/<19 skills>/SKILL.md` | Mirror so cloud sandboxes auto-discover (generated by `scripts/sync_claude_dir.sh`; committed to Git) |
@@ -219,6 +367,7 @@ outcome.
 | `skills/trade-routine/SKILL.md` | `/trade routine [--cloud] [--slack-channel <id>]` — tiered portfolio sweep + ingest + digest |
 | `skills/trade-recall/SKILL.md` | `/trade recall` — semantic query over stored reports |
 | `plan/cfg-verification-<YYYYMMDD>.md` | Slice 0 output: PASS/FAIL/BLOCKED for each CFG gate + routine IDs + log snippets |
+| `proxy/` (and contents: `api/{upsert,query,list,fetch,delete}.py`, `_lib/{auth,validate,ratelimit}.py`, `requirements.txt`, `vercel.json`, `README.md`) | Slice 7.5 Vercel HTTPS proxy fronting Pinecone — see §"Cloud path: Vercel HTTPS proxy" for design. Holds `PINECONE_API_KEY` in its own env vars; routine sandbox never sees the key. |
 
 ## Files to EDIT
 
@@ -258,6 +407,8 @@ Pinecone-specific calls live in a `class VectorStore` so the store is swappable 
 | `PINECONE_REGION` | `us-east-1` | Serverless region |
 | `PINECONE_NAMESPACE` | `trade` | Default namespace; also overridable per-invocation via the top-level `--namespace NS` flag (see Subcommands). Lets downstream consumers operate in per-user namespaces without changing env. |
 | `TRADE_DRIVE_ARCHIVE_FOLDER_ID` | *(optional)* | Drive folder ID for report archive; if unset, `--archive` is a no-op + warning |
+| `PINECONE_PROXY_URL` | *(optional)* | When set together with `PINECONE_PROXY_TOKEN`, `VectorStore` routes all ops through this HTTPS proxy instead of the Pinecone SDK directly. Used in cloud routines (CFG-1 blocks direct key injection). See §"Cloud path: Vercel HTTPS proxy". |
+| `PINECONE_PROXY_TOKEN` | *(optional)* | Bearer token for proxy auth. Required if `PINECONE_PROXY_URL` is set. NEVER set this locally — local invocations should use the Pinecone SDK directly with `PINECONE_API_KEY`. |
 
 **Top-level flags** (apply to every subcommand):
 - `--namespace NS` — overrides `PINECONE_NAMESPACE` for this invocation. Use for
@@ -328,10 +479,10 @@ doctor
 **Record schema:** chunk per report section (split on `##`; cap ~1500 chars w/ overlap;
 Pinecone metadata limit ~40 KB/record). `id = <TICKER>:<TYPE>:<YYYYMMDD-HHMM>:<section-slug>:<n>`.
 Single namespace `trade`. Metadata (flat scalars; lists comma-joined; **signal/grade UPPERCASE**):
-`ticker, company, report_type, generated_at, generated_date, composite_score, technical_score,
-fundamental_score, sentiment_score, risk_score (INVERTED — higher=safer), thesis_score, signal,
-grade, price_at_analysis, price_target, stop_loss, catalysts, nearest_catalyst_date, run_id,
-source_path, section, chunk_index` + chunk text.
+`schema_version, ticker, company, report_type, generated_at, generated_date, composite_score,
+technical_score, fundamental_score, sentiment_score, risk_score (INVERTED — higher=safer),
+thesis_score, signal, grade, price_at_analysis, price_target, stop_loss, catalysts,
+nearest_catalyst_date, run_id, source_path, section, chunk_index` + chunk text.
 
 **Drive archive:** when `--archive` is passed and `TRADE_DRIVE_ARCHIVE_FOLDER_ID` is set, the
 report is uploaded to `<folder>/<TICKER>/TRADE-<TYPE>-<TICKER>-<YYYYMMDD-HHMM>.md` using the
@@ -373,6 +524,34 @@ service. Stability rules:
   console (Project → API keys → Reader role). The producer's write key is NEVER shared.
 - Consumers may use any namespace for their own data (e.g., conversation history) while
   reading from the shared `trade` namespace for reports. See `--namespace` flag above.
+- `schema_version` (int, currently `1`) is in every record; consumers SHOULD validate it on
+  read and refuse unknown majors. Increments only on breaking changes (field rename, type
+  change, enum-value removal). Additive changes (new fields, new enum values) do NOT bump it.
+
+**Field-contract table (the typed surface that D.17 verifies in lockstep with `trade_schemas.py`):**
+
+| Field | Type | Always present? | Notes |
+|-------|------|-----------------|-------|
+| `schema_version` | int | yes | Currently `1`. Increments on breaking changes (field rename, type change, enum-value removal). Additive changes (new fields, new enum values) do NOT bump it. Consumers SHOULD validate on read and refuse unknown majors. |
+| `ticker` | string | yes | UPPERCASE; pattern `^[A-Z0-9.\-]+$` |
+| `company` | string | yes | Plain company name (mixed case OK) |
+| `report_type` | enum | yes | `ANALYSIS` / `THESIS` / `TECHNICAL` / `FUNDAMENTAL` / `SENTIMENT` / `RISK` / `EARNINGS` / `QUICK` |
+| `generated_at` | string (ISO-8601) | yes | Full timestamp with tz offset |
+| `generated_date` | string (YYYY-MM-DD) | yes | Derived from `generated_at` |
+| `composite_score` | int (0–100) | ANALYSIS only | null otherwise |
+| `technical_score`, `fundamental_score`, `sentiment_score`, `risk_score`, `thesis_score` | int (0–100) | per §2 availability table | `risk_score` is INVERTED (higher = safer) |
+| `signal` | enum | when computed | `STRONG BUY` / `BUY` / `HOLD` / `NEUTRAL` / `CAUTION` / `AVOID` — UPPERCASE, exactly 6 values |
+| `grade` | enum | when computed | `A+` / `A` / `B` / `C` / `D` / `F` — single-letter only, exactly 6 values (no `B+`, `C+`, `C-`, `D+`) |
+| `price_at_analysis`, `price_target`, `stop_loss` | float | when computed | USD |
+| `catalysts` | string (comma-joined) | when applicable | List flattened |
+| `nearest_catalyst_date` | string (YYYY-MM-DD) | when applicable | null otherwise |
+| `run_id` | string | when emitted by routine | Format `routine-<YYYYMMDD-HHMM>-<6hex>`; null on manual `/trade analyze` invocations. Groups records from a single routine sweep — required for "what changed in last run" queries. |
+| `source_path` | string | yes | Original filename for citation rendering |
+| `section`, `chunk_index` | string, int | yes | Multi-chunk reports |
+
+This table is mirrored in `plan/trading-chatbot.md` §"Upstream contract" → "Required metadata
+fields per record". Any field rename, type change, or enum-value change requires both files
+updated in the same commit. D.17 verifies the lockstep continuously.
 
 Any plan touching field names, the ID scheme, or signal labels must update both the schema
 docs in `README.md`/`CLAUDE.md` AND notify downstream consumers (the trading-chatbot is the
@@ -387,6 +566,7 @@ block above its existing markdown body:
 ```yaml
 ---
 trade_report: true
+schema_version: 1
 ticker: AAPL
 company: Apple Inc.
 report_type: ANALYSIS        # ANALYSIS|THESIS|TECHNICAL|FUNDAMENTAL|SENTIMENT|RISK|EARNINGS|QUICK
@@ -398,7 +578,7 @@ sentiment_score: 68
 risk_score: 62               # INVERTED — higher = lower risk
 thesis_score: 71
 signal: BUY                  # UPPERCASE; one of STRONG BUY|BUY|HOLD|NEUTRAL|CAUTION|AVOID
-grade: A
+grade: A                     # UPPERCASE; one of A+|A|B|C|D|F (single-letter only)
 price_at_analysis: 185.40
 price_target: 200.00
 stop_loss: 168.00
@@ -411,6 +591,7 @@ nearest_catalyst_date: 2026-07-31
 
 | Field | ANALYSIS | THESIS | TECHNICAL | FUNDAMENTAL | SENTIMENT | RISK | EARNINGS | QUICK |
 |-------|----------|--------|-----------|-------------|-----------|------|----------|-------|
+| `schema_version` | ✓ | ✓ | ✓ | ✓ | ✓ | ✓ | ✓ | ✓ |
 | `composite_score` | ✓ | ✗ | ✗ | ✗ | ✗ | ✗ | ✗ | ✗ |
 | `technical_score` | ✓ | ✗ | ✓ | ✗ | ✗ | ✗ | ✗ | ✗ |
 | `fundamental_score` | ✓ | ✗ | ✗ | ✓ | ✗ | ✗ | ✗ | ✗ |
@@ -519,7 +700,17 @@ Docs natively) → normalize to a clean uppercase ticker list (strip shares/$/na
 `/trade routine` always re-reads Drive directly when Drive is available; the cache is read
 only on Drive failure.
 
-### `/trade routine [--cloud] [--slack-channel <id>]`
+### `/trade routine [--cloud] [--slack-channel <id>] [--max-escalations N]`
+
+**Escalation cap (`--max-escalations N`, default 10).** To protect against subagent-dispatch
+exhaustion on volatile-market days, the routine tracks a per-run counter of `/trade analyze`
+dispatches. When the counter reaches N, further `analyze` decisions (whether from initial
+`recommend-tier` or from quick→analyze escalation) are downgraded to `quick` with a stderr
+`[warn] escalation cap N reached; ticker <T> deferred to next run` line. The digest output
+flags deferred tickers under a "deferred to next run" column. The default supports the
+declared 20-ticker portfolio (50% headroom for catalyst-density spikes); raise to ~50 for
+~100-ticker portfolios. This is the operational guard rail for the practical-ceiling risk
+documented in §Risks ("Escalation-cascade ceiling at ~30 tickers without cap").
 
 Trigger-agnostic orchestration:
 
@@ -582,11 +773,16 @@ The Python function in `scripts/generate_trade_pdf.py:82-93` collapses 25-54 →
 | Score | Grade | Signal |
 |-------|-------|--------|
 | 85+ | A+ | STRONG BUY |
-| 70-84 | A / B+ / B | BUY |
-| 55-69 | C+ / C | HOLD |
-| 40-54 | C- / D+ | NEUTRAL |
+| 70-84 | A | BUY |
+| 55-69 | B | HOLD |
+| 40-54 | C | NEUTRAL |
 | 25-39 | D | CAUTION |
 | 0-24 | F | AVOID |
+
+**Grade is single-letter only — exactly 6 values: `A+`, `A`, `B`, `C`, `D`, `F`.** No sub-letters
+(no `B+`, `C+`, `C-`, `D+`). This matches the current `score_grade()` in `scripts/generate_trade_pdf.py:82-93`
+and the Consumer Integration field table in §1. If `trade/SKILL.md:57-64` documents sub-letters
+in slashes (e.g., `A / B+ / B`), slice 1's debt-cleanup pass collapses them to single letters.
 
 **File enumeration for slice 1 (every place a signal label appears):**
 
@@ -605,7 +801,10 @@ The Python function in `scripts/generate_trade_pdf.py:82-93` collapses 25-54 →
 2. `generate_trade_pdf.py` imports from `trade_scoring.py`; running
    `python3 scripts/generate_trade_pdf.py` (demo) produces correct labels.
 3. The 6 boundary scores (85/70/55/40/25/0) routed through both helpers produce STRONG
-   BUY/BUY/HOLD/NEUTRAL/CAUTION/AVOID exactly.
+   BUY/BUY/HOLD/NEUTRAL/CAUTION/AVOID exactly **AND** grades A+/A/B/C/D/F exactly (6 distinct
+   single-letter values; `grep -rn "B+\|C+\|C-\|D+" scripts/ trade/ skills/ agents/` returns
+   only intentional pre-existing per-dimension uses noted in the file enumeration above —
+   no composite-grade output strings).
 4. `README.md` no longer has the duplicate-Caution bug; greps for "Caution" + "NEUTRAL"
    appear in the expected bands.
 5. `agents/*.md` per-dimension tables are annotated (comments added) so a future contributor
@@ -654,13 +853,23 @@ returns only intentional uses; the duplicate-Caution bug in `README.md:141` is g
 non-trade agents are byte-identical to their pre-sync state; `diff -rq skills/
 .claude/skills/<root-subset>/` shows no drift.
 
-### Slice 3a — `trade_memory.py` core (2–3 days)
-- Implement `class VectorStore` (Pinecone wrapper).
+### Slice 3a — `trade_memory.py` core + shared schemas (2–3 days)
+- **Create `scripts/trade_schemas.py` first** (module-level `SCHEMA_VERSION = 1` constant;
+  Pydantic models: `RecordMetadata` with `schema_version: int = 1` as a required field
+  defaulted to the constant, `RecordID`, `NamespaceAllowlist`, `Signal`/`Grade` enums). This
+  is the file slice 7.5's proxy imports — see §"Cloud path: Vercel HTTPS proxy".
+- Implement `class VectorStore` (Pinecone wrapper); have it `import trade_schemas` for
+  all metadata validation on the write path.
 - `init`, `ingest`, `query` subcommands.
-- Frontmatter parser + `_parse_legacy()` fallback.
+- Frontmatter parser + `_parse_legacy()` fallback (both produce `RecordMetadata`
+  instances; no ad-hoc dict construction).
 
 **Gate:** Verification A.1–A.6 below pass on a sample file; `init` is idempotent; ingest
-records are visible in Pinecone via `query`.
+records are visible in Pinecone via `query`. **Plus: in a clean virtualenv with only
+`pydantic` and `pinecone>=5` installed, `python -c "import sys; sys.path.insert(0,
+'scripts'); import trade_schemas; print(trade_schemas.RecordMetadata.model_json_schema())"`
+prints the schema without ImportError** — proves the schemas module is importable
+standalone, which slice 7.5's proxy depends on.
 
 ### Slice 3b — `trade_memory.py` higher-level commands (2–3 days)
 - `recommend-tier`, `timeline`, `list`, `rebuild`, `delete`, `doctor`.
@@ -716,10 +925,51 @@ records exist; "treat as reference" framing. Run sync script.
 `/trade thesis AAPL` produces structurally identical output with and without Pinecone
 configured (only the Prior Analysis Context block differs).
 
+### Slice 7.5 — Vercel HTTPS proxy (1–2 days, after CFG-1 BLOCKED + Path D chosen)
+
+Builds `proxy/` per the directory layout in §"Cloud path: Vercel HTTPS proxy".
+
+- Author the 5 endpoints + shared validation/auth/ratelimit lib (~300 LOC Python).
+- Import validation schema from `scripts/trade_memory.py`'s shared module (extracted in
+  slice 3a) so proxy + producer enforce identical contracts.
+- Deploy to Vercel under a high-entropy subdomain; set `PINECONE_API_KEY` +
+  `PROXY_AUTH_TOKEN` as Vercel env vars.
+- Wire Upstash Redis rate limit (free tier).
+- Author `proxy/README.md` covering: redeploy, env-var management, URL rotation,
+  bearer-token rotation, log review procedure, **and a "Don't commit the token"
+  checklist enumerating safe places to store `PINECONE_PROXY_TOKEN` (Vercel env-var UI,
+  local password manager) vs unsafe (anywhere under the repo root, anywhere in
+  `.claude/` which gets rsync-mirrored, any chat transcript, any `.env` checked into
+  git) — see §"Cloud path: Vercel HTTPS proxy" → "Token hygiene" for the source of
+  truth this checklist mirrors.**
+
+**Gate:**
+1. Manual `curl` against each endpoint with valid token returns expected JSON.
+2. Manual `curl` with wrong token returns 401.
+3. Manual `curl` with invalid namespace returns 400.
+4. Rate-limit test: 200 requests in 60 seconds → 100 succeed, ≥ 100 return 429.
+5. Round-trip parity: same `TRADE-ANALYSIS-TEST.md` ingested via local SDK and via proxy
+   produces byte-identical Pinecone records (D.19 gate); verified by `latest TEST --type
+   ANALYSIS` returning identical JSON under both modes.
+6. `trade_memory.py` with `PINECONE_PROXY_URL` + `PINECONE_PROXY_TOKEN` set proxies all
+   ops; `doctor` reports proxy mode active and the auth check passes.
+
 ### Slice 8 — Cloud routine deployment (2–3 days, after CFG verifications pass)
-Add the `--cloud` flag wiring + Slack DM delivery + Drive archive upload. Document the
-cloud routine creation flow in `README.md`. Document the verification routines so the user
-can re-run them on Anthropic platform changes.
+Add the `--cloud` flag wiring + Slack DM delivery + Drive archive upload. The cloud
+routine prompt template now exports two env vars before invoking the routine:
+
+```bash
+export PINECONE_PROXY_URL="https://<deployed-subdomain>.vercel.app"
+export PINECONE_PROXY_TOKEN="<32-char-hex-from-vercel-env>"
+```
+
+`trade_memory.py` auto-detects both being set and routes all Pinecone ops via the proxy
+(per §"Cloud path: Vercel HTTPS proxy" → "cloud-mode auto-detect"). Skills don't branch.
+
+Document the cloud routine creation flow in `README.md`, including the explicit "this
+auth model is research-tool-grade, not production-grade" callout and the rotation
+procedure. Document the verification routines (CFG-1/2/3/4) so the user can re-run them
+on Anthropic platform changes.
 
 **Gate:** create a one-shot cloud routine via `/schedule` that runs `/trade routine --cloud
 --slack-channel <id>` against a 2-ticker holdings list; routine completes; Pinecone shows
@@ -872,6 +1122,19 @@ standalone CLIs.
 18. **`--namespace` flag works end-to-end.** `trade_memory.py --namespace test-ns list`
     queries only `test-ns`; default-namespace queries are unaffected.  The flag overrides
     `PINECONE_NAMESPACE` env when both are set.
+19. **Proxy schema-validation parity (slice 7.5+).** Same `TRADE-ANALYSIS-TEST.md`
+    ingested via local SDK and via the Vercel proxy produces byte-identical Pinecone
+    records. Verify by running `trade_memory.py ingest TRADE-ANALYSIS-TEST.md` twice
+    (once with `PINECONE_PROXY_URL` unset, once set) and `diff <(trade_memory.py latest
+    TEST --type ANALYSIS)` between the two invocations — no field-level drift allowed.
+    Run on every commit that touches `proxy/api/*.py`, `proxy/_lib/validate.py`, or the
+    shared validation module imported by both.
+20. **Proxy auth gate (slice 7.5+).** `curl -H "Authorization: Bearer <wrong-token>"
+    <proxy-url>/query -d '{}'` returns HTTP 401. `curl` without the header returns
+    HTTP 401. `curl` with the right token but a payload referencing a forbidden
+    namespace returns HTTP 400. Rate-limit threshold: 200 requests in 60 seconds → ≥ 100
+    return HTTP 429. Run on every commit that touches `proxy/_lib/auth.py` or
+    `proxy/_lib/ratelimit.py`.
 
 ---
 
@@ -899,6 +1162,22 @@ standalone CLIs.
   `~/.claude/trade/TRADE-HOLDINGS.md`; if cloud, the cache may not exist, so the routine
   aborts with a clear message. Mitigation: contributor runs `/trade holdings` locally
   periodically to refresh the cache; document this maintenance step.
+- **Vercel proxy downtime (slice 7.5+).** Cloud routines fail. Local invocations
+  unaffected (they use the SDK directly). `recommend-tier` returns `analyze` (safe
+  default per existing graceful-failure contract) and the routine continues with a
+  Slack notification: "Pinecone proxy unreachable; deferring all tickers to full
+  analyze tier on next local run." Mitigation: Vercel SLA + `doctor` warns on proxy
+  health failure + monthly proxy redeploy as part of token rotation forces a fresh
+  warm.
+- **Proxy bearer-token leak (slice 7.5+).** Attacker who obtains the token + the
+  high-entropy URL can write schema-valid records to allowed namespaces or run
+  validated queries — but cannot exfiltrate arbitrary data or bulk-delete without
+  explicit `confirm: "yes"` in the payload. Mitigation: schema lockdown (the proxy
+  rejects anything outside the Consumer Integration schema), namespace allowlist,
+  Upstash rate limit, monthly token rotation. Recovery: rotate token + rotate URL +
+  `trade_memory.py rebuild <drive-folder-id>` to re-establish a clean index. Total
+  worst-case recovery time: ½ day. Documented in README slice-9 cloud-deployment
+  section as "research-tool-grade auth, not production-grade."
 - **Pinecone SDK drift.** `pinecone` SDK and integrated-inference API have evolved; confirm
   exact call shapes at implementation time via Context7.
 - **Embedding-model drift silently breaks search.** `doctor` warns on mismatch. Migration
@@ -910,6 +1189,16 @@ standalone CLIs.
 - **`risk_score` inversion.** Labeled `(inverted)` everywhere it surfaces.
 - **Quick signal vs composite score.** Composite-delta trigger dropped; signal-change is the
   sole quick-tier escalation trigger per the §5 escalation matrix.
+- **Escalation-cascade ceiling at ~30 tickers without cap.** The current `recommend-tier`
+  rules (no prior ANALYSIS / catalyst within 14d / last analysis > 30d → `analyze`) plus
+  signal-change escalation can produce a worst-case where every ticker in a volatile session
+  escalates to a full 5-agent fan-out. At 20 tickers this is comfortably absorbed; at 100
+  tickers the cloud sandbox's subagent-dispatch and total-runtime budgets will exhaust
+  before the routine completes. The `--max-escalations N` flag (§5) is the guard rail.
+  Operating limits: default cap 10 supports the declared 20-ticker portfolio; ~50 for ~100
+  tickers; beyond that, shard the holdings list across multiple routines on different cron
+  slots. Document chosen cap in the routine prompt and review monthly against actual
+  escalation counts in the digest history.
 - **Pinecone cost.** ~$0.15–$0.30/month for 20-ticker daily; set Pinecone-console budget
   alert at $5; document in README.
 - **Pre-existing debt.** Slice 1 fixes it before any data lands.
@@ -934,6 +1223,11 @@ This plan commits the project to a four-dependency maintenance surface:
    the durability backstop.
 4. **`.claude/` mirror discipline.** No pre-commit hook means contributor diligence is the
    only defense against drift. Quality gates D.10 + D.11 detect it on install/test runs.
+5. **Vercel proxy (slice 7.5+).** Vercel function lifecycle (cold starts, runtime
+   deprecations), Upstash Redis service availability, bearer token + URL rotation
+   discipline (monthly + quarterly cadence documented in `proxy/README.md`). Failure
+   mode is graceful: cloud routines fall back to "schedule alive only" mode; local
+   invocations are unaffected.
 
 Recovery playbook: if Drive is unavailable for an extended period, the local
 `~/.claude/trade/TRADE-HOLDINGS.md` keeps the routine running for the last-known holdings;
