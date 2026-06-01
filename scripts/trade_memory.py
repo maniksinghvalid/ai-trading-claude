@@ -7,15 +7,21 @@ Vector store interface over Pinecone (serverless, integrated inference).
 * Single source of truth for the record schema: ``scripts/trade_schemas.py``
 * Shared scoring helpers (legacy parser): ``scripts/trade_scoring.py``
 
-Slice 3a (this slice) ships:
-    init          Create the integrated-inference index (idempotent)
-    ingest        Parse a TRADE-*.md report and upsert its chunks
-    query         Semantic search over stored reports
+Slices 3a + 3b ship:
+    init               Create the integrated-inference index (idempotent)
+    ingest             Parse a TRADE-*.md report and upsert its chunks
+                       (--archive flag delegates Drive upload to the calling skill)
+    query              Semantic search over stored reports
+    latest             Newest record's metadata as JSON
+    list               Manifest listing across the namespace
+    timeline           All records for a ticker, oldest→newest
+    delete             GC for a ticker (--before YYYY-MM-DD optional)
+    rebuild            Re-ingest every TRADE-*.md under a local directory
+    recommend-tier     Tier the next sweep: prints `analyze` or `quick`
+                       (Pinecone-unavailable: prints `analyze` and exits 0)
+    doctor             Health check; exit codes 0 healthy / 1 degraded / 2 unavailable
 
-Slice 3b will add:
-    recommend-tier, timeline, list, rebuild, delete, doctor
-    Drive archive helper (--archive flag on ingest)
-    Top-level --namespace flag plumbed everywhere
+Top-level ``--namespace NS`` overrides PINECONE_NAMESPACE for every subcommand.
 
 Slice 7.5 will wire:
     Cloud-mode auto-detect via PINECONE_PROXY_URL + PINECONE_PROXY_TOKEN
@@ -24,16 +30,33 @@ Slice 7.5 will wire:
 
 See ``plan/portfolio-routine-and-vector-memory.md`` §1 for the full spec.
 
+Drive archive note (slice 3b architectural decision)
+----------------------------------------------------
+Python cannot invoke the Google_Drive MCP tools directly — those live in the
+LLM/skill context. The ``ingest --archive`` flag therefore:
+
+* If ``TRADE_DRIVE_ARCHIVE_FOLDER_ID`` is unset → emits a one-line setup hint
+  on stderr (the upsert still proceeds; the archive is a no-op).
+* If set → emits a structured ``[archive-todo] …`` line on stderr describing
+  the search_files / create_file / create_file flow the calling skill must
+  perform. The Pinecone upsert is authoritative either way.
+
+The ``rebuild`` subcommand likewise handles local directories only. When given
+a Drive folder ID (a token that doesn't look like a path), it errors out and
+points the user at the equivalent skill-level flow.
+
 Usage
 -----
 
 ::
 
-    # Local (slice 3a):
     export PINECONE_API_KEY=pcsk_...
     python3 scripts/trade_memory.py init
     python3 scripts/trade_memory.py ingest TRADE-ANALYSIS-AAPL.md
     python3 scripts/trade_memory.py query "bull case for apple" --ticker AAPL -n 5
+    python3 scripts/trade_memory.py latest AAPL --type ANALYSIS
+    python3 scripts/trade_memory.py recommend-tier AAPL
+    python3 scripts/trade_memory.py doctor
 """
 
 import argparse
@@ -43,7 +66,7 @@ import os
 import pathlib
 import re
 import sys
-from datetime import datetime, timezone
+from datetime import datetime, timedelta, timezone
 
 
 # ---------------------------------------------------------------------------
@@ -214,6 +237,144 @@ class VectorStore:
             q["filter"] = filter_dict
         return self.index.search(namespace=self.namespace, query=q)
 
+    # -----------------------------------------------------------------------
+    # Read helpers (slice 3b — latest / list / timeline / delete / doctor)
+    # -----------------------------------------------------------------------
+
+    def list_ids(self, prefix: str = None):
+        """Yield every record ID in the current namespace (optionally filtered
+        by prefix). Walks pagination explicitly via list_paginated so we don't
+        rely on the SDK's generator behavior — the routine plan calls for
+        deterministic pagination.
+        """
+        # Pinecone returns page sizes up to ~100 by default; explicit limit
+        # keeps memory bounded on a 10k-record index.
+        page_limit = 100
+        token = None
+        while True:
+            kwargs = {"namespace": self.namespace, "limit": page_limit}
+            if prefix:
+                kwargs["prefix"] = prefix
+            if token:
+                kwargs["pagination_token"] = token
+            resp = self.index.list_paginated(**kwargs)
+            vectors = getattr(resp, "vectors", None) or []
+            for v in vectors:
+                # Each entry is a dict-like with at least an `id` key
+                vid = v.get("id") if hasattr(v, "get") else getattr(v, "id", None)
+                if vid:
+                    yield vid
+            pagination = getattr(resp, "pagination", None)
+            token = pagination.get("next") if pagination and hasattr(pagination, "get") else (
+                getattr(pagination, "next", None) if pagination else None
+            )
+            if not token:
+                break
+
+    def fetch_meta(self, ids):
+        """Fetch metadata for a batch of IDs. Returns ``{id: {meta_dict}}``.
+        Pinecone caps a single fetch around ~1000 IDs; we batch in 100s to
+        match the list page size and keep request bodies small.
+        """
+        ids = list(ids)
+        if not ids:
+            return {}
+        result = {}
+        for start in range(0, len(ids), 100):
+            chunk = ids[start : start + 100]
+            resp = self.index.fetch(ids=chunk, namespace=self.namespace)
+            vectors = getattr(resp, "vectors", None) or {}
+            # FetchResponse.vectors is a dict id → Vector with .metadata
+            for vid, vec in vectors.items():
+                meta = getattr(vec, "metadata", None)
+                if meta is None and hasattr(vec, "get"):
+                    meta = vec.get("metadata", {})
+                result[vid] = dict(meta) if meta else {}
+        return result
+
+    def delete_ids(self, ids):
+        """Delete records by ID. No-op on empty input."""
+        ids = list(ids)
+        if not ids:
+            return 0
+        # Pinecone delete also batches well at 100; matches list page size.
+        for start in range(0, len(ids), 100):
+            self.index.delete(ids=ids[start : start + 100], namespace=self.namespace)
+        return len(ids)
+
+    def describe_index(self):
+        """Return the IndexModel — used by `doctor` to verify embedding-model
+        drift. Cached on the client; cheap to call.
+        """
+        return self.client.describe_index(self.index_name)
+
+    def describe_stats(self):
+        """Return ``Index.describe_index_stats()`` raw. `doctor` and `delete`
+        consume the per-namespace vector_count from ``stats.namespaces``.
+        """
+        return self.index.describe_index_stats()
+
+
+# ---------------------------------------------------------------------------
+# ID helpers — record IDs are part of the public contract; their lexical
+# sortability is what makes `latest` / `timeline` cheap.
+# ---------------------------------------------------------------------------
+
+# Mirror of trade_schemas.RECORD_ID_PATTERN; split here so we can introspect
+# the fields without re-parsing the regex on every record.
+def _parse_id(rid: str):
+    """Return ``(ticker, type, timestamp, section, chunk_index)`` or None
+    if the ID doesn't match the contract grammar.
+    """
+    parts = rid.split(":")
+    if len(parts) != 5:
+        return None
+    try:
+        chunk_idx = int(parts[4])
+    except ValueError:
+        return None
+    return (parts[0], parts[1], parts[2], parts[3], chunk_idx)
+
+
+def _newest_timestamp(ids):
+    """Return the lexically-largest ``YYYYMMDD-HHMM`` timestamp across IDs,
+    or None if the iterable is empty / unparseable.
+    """
+    best = None
+    for rid in ids:
+        parsed = _parse_id(rid)
+        if parsed is None:
+            continue
+        ts = parsed[2]
+        if best is None or ts > best:
+            best = ts
+    return best
+
+
+def _meta_display(meta: dict, drop_text: bool = True) -> dict:
+    """Trim a metadata dict to the fields useful in CLI output. We hide the
+    chunk text by default (verbose; `query` is the path that surfaces it).
+    """
+    out = dict(meta)
+    if drop_text and "text" in out:
+        del out["text"]
+    return out
+
+
+def _display_date(meta: dict) -> str:
+    """Pull a display date out of a metadata dict. Prefers ``generated_date``
+    (the canonical field per the §1 contract); falls back to ``generated_at[:10]``
+    for legacy records ingested before the parse_report derivation landed
+    (slice 3a fixtures). Returns ``"-"`` if neither is set.
+    """
+    d = meta.get("generated_date")
+    if d:
+        return str(d)
+    g = meta.get("generated_at")
+    if g:
+        return str(g)[:10]
+    return "-"
+
 
 # ---------------------------------------------------------------------------
 # Report parsing — frontmatter first, legacy fallback, filename-only floor
@@ -249,6 +410,14 @@ def parse_report(file_path: str):
     if not chunks:
         # Empty body — at least produce one chunk so the record is upsertable.
         chunks = [("body", body or "(empty)")]
+
+    # Derive generated_date from generated_at if the upstream skill omitted
+    # it. The §1 contract table marks generated_date "always present", so we
+    # backfill rather than ship records with a null value that recommend-tier
+    # would then mishandle. (Slice 3a missed this; surfaced when implementing
+    # the 30-day age rule for recommend-tier.)
+    if meta_dict.get("generated_at") and not meta_dict.get("generated_date"):
+        meta_dict["generated_date"] = str(meta_dict["generated_at"])[:10]
 
     records = []
     for i, (section, chunk_text) in enumerate(chunks):
@@ -430,7 +599,52 @@ def cmd_ingest(args):
         f"Ingested {len(records)} chunk(s) from {pathlib.Path(args.file).name} "
         f"into Pinecone namespace '{store.namespace}'."
     )
+
+    # --archive: Python can't invoke MCP tools directly, so we emit either a
+    # setup hint (folder unset) or a structured todo for the calling skill to
+    # act on (folder set). The Pinecone upsert above is the authoritative
+    # outcome; archive failures are warnings, never errors.
+    if args.archive:
+        _handle_archive_flag(args.file, first.ticker)
+
     return 0
+
+
+def _handle_archive_flag(file_path: str, ticker: str):
+    """Emit the appropriate stderr message for `--archive`. See module
+    docstring "Drive archive note" for the architectural rationale.
+    """
+    folder_id = os.environ.get("TRADE_DRIVE_ARCHIVE_FOLDER_ID")
+    basename = pathlib.Path(file_path).name
+    if not folder_id:
+        sys.stderr.write(
+            "[archive-setup] --archive requested but "
+            "TRADE_DRIVE_ARCHIVE_FOLDER_ID is unset. To enable Drive "
+            "mirroring: create a Drive folder via `/trade holdings` or "
+            "directly in Drive, then `export "
+            "TRADE_DRIVE_ARCHIVE_FOLDER_ID=<folder-id>`. "
+            "Pinecone upsert succeeded; Drive upload skipped.\n"
+        )
+        return
+    # Structured todo: the calling skill greps for "[archive-todo]" and runs
+    # the three Drive MCP calls. Encoded as JSON on a single line so the
+    # skill can parse it reliably without a custom format.
+    todo = {
+        "intent": "drive-archive",
+        "file_path": str(pathlib.Path(file_path).resolve()),
+        "file_basename": basename,
+        "ticker": ticker,
+        "archive_folder_id": folder_id,
+        "flow": [
+            "search_files(name=<TICKER>, parent=<archive_folder_id>, "
+            "mimeType='application/vnd.google-apps.folder')",
+            "if not found: create_file(name=<TICKER>, parent=<archive_folder_id>, "
+            "mimeType='application/vnd.google-apps.folder') → ticker_folder_id",
+            "create_file(name=<file_basename>, parent=<ticker_folder_id>, "
+            "contents=<file>)",
+        ],
+    }
+    sys.stderr.write("[archive-todo] " + json.dumps(todo) + "\n")
 
 
 def cmd_query(args):
@@ -484,6 +698,547 @@ def cmd_query(args):
 
 
 # ---------------------------------------------------------------------------
+# Slice 3b subcommands — latest / list / timeline / delete / rebuild /
+# recommend-tier / doctor
+# ---------------------------------------------------------------------------
+
+
+def _select_latest_meta(store: "VectorStore", ticker: str, report_type: str = None):
+    """Find the newest record for ``ticker`` (optionally filtered to a
+    report_type), fetch one chunk's metadata, and return it. Returns None if
+    no records exist.
+
+    Strategy: list-by-prefix → pick the largest timestamp → fetch one of its
+    IDs. IDs being lexically sortable on the YYYYMMDD-HHMM component is what
+    makes this O(N) over the matched prefix without a sort.
+    """
+    prefix = f"{ticker}:" if not report_type else f"{ticker}:{report_type}:"
+    all_ids = list(store.list_ids(prefix=prefix))
+    if not all_ids:
+        return None
+    # If --type was not passed, restrict to ANALYSIS for tier decisions — but
+    # callers wanting "newest of any type" should pass an explicit type. Here
+    # we leave the filtering to the caller; pick the lexically max ID.
+    newest_ts = _newest_timestamp(all_ids)
+    if newest_ts is None:
+        return None
+    candidates = [i for i in all_ids if _parse_id(i) and _parse_id(i)[2] == newest_ts]
+    # Fetch just one — all chunks of one report share their identification
+    # metadata (only section/chunk_index/text differ).
+    meta_by_id = store.fetch_meta(candidates[:1])
+    if not meta_by_id:
+        return None
+    return next(iter(meta_by_id.values()))
+
+
+def cmd_latest(args):
+    store = VectorStore(namespace=args.namespace)
+    meta = _select_latest_meta(store, args.ticker, args.type)
+    if meta is None:
+        print("{}")
+        return 0
+    print(json.dumps(_meta_display(meta), indent=2, sort_keys=True, default=str))
+    return 0
+
+
+def cmd_list(args):
+    """Manifest: one line per matching record. Default limit 100 keeps output
+    paste-friendly on large namespaces.
+    """
+    store = VectorStore(namespace=args.namespace)
+    # Pick the most selective prefix the filters allow
+    if args.ticker and args.type:
+        prefix = f"{args.ticker}:{args.type}:"
+    elif args.ticker:
+        prefix = f"{args.ticker}:"
+    else:
+        prefix = None
+
+    ids = []
+    for rid in store.list_ids(prefix=prefix):
+        # --type without --ticker: filter post-list since Pinecone has no
+        # type-only prefix path (ticker comes first in the ID grammar).
+        if args.type and not args.ticker:
+            parsed = _parse_id(rid)
+            if not parsed or parsed[1] != args.type:
+                continue
+        ids.append(rid)
+        if len(ids) >= args.limit:
+            break
+
+    if not ids:
+        print("(no records)")
+        return 0
+
+    meta_by_id = store.fetch_meta(ids)
+    for rid in ids:
+        meta = meta_by_id.get(rid, {})
+        print(
+            f"{rid}\t"
+            f"signal={meta.get('signal', '-')}\t"
+            f"grade={meta.get('grade', '-')}\t"
+            f"score={meta.get('composite_score', '-')}\t"
+            f"date={_display_date(meta)}\t"
+            f"section={meta.get('section', '-')}"
+        )
+    print(f"\n{len(ids)} record(s) listed.", file=sys.stderr)
+    return 0
+
+
+def cmd_timeline(args):
+    """All records for a ticker, oldest→newest, filtered by --since."""
+    store = VectorStore(namespace=args.namespace)
+    # Default --since: 12 months back from today (UTC).
+    if args.since is None:
+        cutoff_date = (datetime.now(timezone.utc) - timedelta(days=365)).date()
+    else:
+        try:
+            cutoff_date = datetime.strptime(args.since, "%Y-%m-%d").date()
+        except ValueError:
+            print(
+                f"[error] --since must be YYYY-MM-DD; got {args.since!r}",
+                file=sys.stderr,
+            )
+            return 1
+
+    ids = list(store.list_ids(prefix=f"{args.ticker}:"))
+    if not ids:
+        print(f"(no records for {args.ticker})")
+        return 0
+
+    # Lexical sort on the full ID == sort by (type, timestamp, section, chunk)
+    # which interleaves types. Resort on the timestamp component to interleave
+    # cleanly across report types.
+    def _ts(rid):
+        parsed = _parse_id(rid)
+        return parsed[2] if parsed else "00000000-0000"
+
+    ids.sort(key=_ts)
+
+    meta_by_id = store.fetch_meta(ids[: args.limit * 4])  # buffer for filtering
+    rows = []
+    for rid in ids:
+        meta = meta_by_id.get(rid, {})
+        gen_date = meta.get("generated_date") or ""
+        if gen_date:
+            try:
+                if datetime.strptime(gen_date, "%Y-%m-%d").date() < cutoff_date:
+                    continue
+            except ValueError:
+                pass  # tolerate malformed dates; show the record
+        rows.append((rid, meta))
+        if len(rows) >= args.limit:
+            break
+
+    if not rows:
+        print(f"(no records for {args.ticker} since {cutoff_date})")
+        return 0
+
+    # Group by report timestamp (one row per report, not per chunk)
+    seen_ts = set()
+    for rid, meta in rows:
+        parsed = _parse_id(rid)
+        if not parsed:
+            continue
+        ts = parsed[2]
+        if ts in seen_ts:
+            continue
+        seen_ts.add(ts)
+        print(
+            f"{_display_date(meta)}\t"
+            f"{parsed[1]:>10}\t"
+            f"signal={meta.get('signal', '-')}\t"
+            f"grade={meta.get('grade', '-')}\t"
+            f"score={meta.get('composite_score', '-')}\t"
+            f"id={rid}"
+        )
+    print(
+        f"\n{len(seen_ts)} report(s) for {args.ticker} since {cutoff_date}.",
+        file=sys.stderr,
+    )
+    return 0
+
+
+def cmd_delete(args):
+    """GC for a ticker. Confirms unless --yes. ``--before YYYY-MM-DD`` keeps
+    records dated on/after that boundary; rest go.
+    """
+    store = VectorStore(namespace=args.namespace)
+    ids = list(store.list_ids(prefix=f"{args.ticker}:"))
+    if not ids:
+        print(f"(no records for {args.ticker})")
+        return 0
+
+    # --before filter requires metadata; if absent, delete everything for the
+    # ticker.
+    targets = ids
+    if args.before:
+        try:
+            cutoff_date = datetime.strptime(args.before, "%Y-%m-%d").date()
+        except ValueError:
+            print(
+                f"[error] --before must be YYYY-MM-DD; got {args.before!r}",
+                file=sys.stderr,
+            )
+            return 1
+        meta_by_id = store.fetch_meta(ids)
+        targets = []
+        for rid in ids:
+            gen_date = (meta_by_id.get(rid, {}) or {}).get("generated_date")
+            if not gen_date:
+                # No date → conservatively skip (don't blow away records we
+                # can't classify).
+                continue
+            try:
+                if datetime.strptime(gen_date, "%Y-%m-%d").date() < cutoff_date:
+                    targets.append(rid)
+            except ValueError:
+                continue
+
+    if not targets:
+        print(
+            f"(no records for {args.ticker} match the filter; nothing to delete)"
+        )
+        return 0
+
+    if not args.yes:
+        sys.stderr.write(
+            f"About to delete {len(targets)} record(s) for {args.ticker} "
+            f"from namespace '{store.namespace}'.\n"
+            f"Pass --yes to proceed, or Ctrl-C to abort.\n"
+        )
+        try:
+            confirm = input("Type the ticker to confirm: ").strip()
+        except (EOFError, KeyboardInterrupt):
+            print("\n(aborted)", file=sys.stderr)
+            return 1
+        if confirm != args.ticker:
+            print("(ticker mismatch; aborted)", file=sys.stderr)
+            return 1
+
+    deleted = store.delete_ids(targets)
+    print(
+        f"Deleted {deleted} record(s) for {args.ticker} "
+        f"from namespace '{store.namespace}'."
+    )
+    return 0
+
+
+def cmd_rebuild(args):
+    """Re-ingest every TRADE-*.md under <source>. Local directories only —
+    Drive folder IDs are out of scope for the Python script (MCP-tool calls
+    only run inside the LLM/skill context). See module docstring.
+    """
+    store = VectorStore(namespace=args.namespace)
+    exclude = set()
+    if args.exclude_ticker:
+        exclude = {t.strip().upper() for t in args.exclude_ticker.split(",") if t.strip()}
+
+    source = pathlib.Path(args.source).expanduser()
+    if not source.exists() or not source.is_dir():
+        # If it doesn't look like a path, the user probably passed a Drive
+        # folder ID. Point them at the equivalent skill-side flow.
+        if "/" not in args.source and "\\" not in args.source:
+            print(
+                f"[error] rebuild expects a local directory; got {args.source!r}, "
+                "which doesn't exist as a path.\n"
+                "  Drive-folder rebuild requires the Google_Drive MCP tools, "
+                "which Python can't invoke directly.\n"
+                "  Workflow: have the calling skill list & download the Drive "
+                "folder's TRADE-*.md files into a local directory, then point "
+                "rebuild at that directory.",
+                file=sys.stderr,
+            )
+            return 2
+        print(
+            f"[error] rebuild source not found or not a directory: {source}",
+            file=sys.stderr,
+        )
+        return 1
+
+    files = sorted(source.glob("TRADE-*.md"))
+    if not files:
+        print(f"[warn] no TRADE-*.md files under {source}", file=sys.stderr)
+        return 0
+
+    total_chunks = 0
+    skipped = 0
+    for fp in files:
+        try:
+            records = parse_report(str(fp))
+        except Exception as e:
+            print(f"[warn] {fp.name}: parse failed ({e}); skipping", file=sys.stderr)
+            continue
+        if not records:
+            continue
+        ticker = records[0].ticker
+        if ticker in exclude:
+            skipped += 1
+            print(f"  - {fp.name}: skipped (ticker {ticker} excluded)", file=sys.stderr)
+            continue
+        first = records[0]
+        ts = first.generated_at_compact()
+        for rec in records:
+            rec.id = (
+                f"{rec.ticker}:{rec.report_type}:{ts}"
+                f":{rec.section}:{rec.chunk_index}"
+            )
+        store.upsert_records(records)
+        total_chunks += len(records)
+        print(
+            f"  + {fp.name}: {len(records)} chunk(s) → namespace '{store.namespace}'",
+            file=sys.stderr,
+        )
+
+    print(
+        f"Rebuilt {total_chunks} chunk(s) from {len(files) - skipped} file(s) "
+        f"({skipped} excluded) under {source}."
+    )
+    return 0
+
+
+def cmd_recommend_tier(args):
+    """Tier the next sweep. Rules per plan §1:
+        analyze   no prior ANALYSIS, OR catalyst within 14 days,
+                  OR last full analysis > 30 days old, OR Pinecone unavailable
+        quick     otherwise
+
+    Pinecone-unavailable → prints `analyze` and exits 0 with a stderr warning
+    (NOT a non-zero exit; the routine must keep running). This is the
+    explicit safe-default contract from the spec.
+    """
+    try:
+        store = VectorStore(namespace=args.namespace)
+        # Force credential check up-front so we surface the "memory unknown"
+        # branch before issuing any RPCs.
+        _ = store.index  # triggers _require_local_creds + Pinecone client init
+        meta = _select_latest_meta(store, args.ticker, report_type="ANALYSIS")
+    except SystemExit:
+        # _require_local_creds calls sys.exit on missing key; intercept so
+        # recommend-tier itself stays exit 0 per spec.
+        print("analyze")
+        sys.stderr.write(
+            "[warn] recommend-tier: Pinecone unavailable "
+            "(missing/invalid PINECONE_API_KEY); defaulted to analyze.\n"
+        )
+        return 0
+    except Exception as e:
+        print("analyze")
+        sys.stderr.write(
+            f"[warn] recommend-tier: Pinecone error ({e}); defaulted to analyze.\n"
+        )
+        return 0
+
+    if not meta:
+        # No prior ANALYSIS → analyze
+        print("analyze")
+        return 0
+
+    today = datetime.now(timezone.utc).date()
+
+    # Rule: catalyst within 14 days → analyze
+    nearest = meta.get("nearest_catalyst_date")
+    if nearest:
+        try:
+            cat_date = datetime.strptime(str(nearest), "%Y-%m-%d").date()
+            if 0 <= (cat_date - today).days <= 14:
+                print("analyze")
+                return 0
+        except ValueError:
+            pass  # malformed catalyst date — fall through to age check
+
+    # Rule: last analysis > 30 days old → analyze
+    # Backfill from generated_at for legacy records ingested before the
+    # parse_report `generated_date` derivation landed (slice 3a fixture data).
+    gen_date = meta.get("generated_date")
+    if not gen_date and meta.get("generated_at"):
+        gen_date = str(meta["generated_at"])[:10]
+    if gen_date:
+        try:
+            g_date = datetime.strptime(str(gen_date), "%Y-%m-%d").date()
+            if (today - g_date).days > 30:
+                print("analyze")
+                return 0
+        except ValueError:
+            # No reliable date — safer to escalate than to skip
+            print("analyze")
+            sys.stderr.write(
+                f"[warn] recommend-tier {args.ticker}: malformed generated_date "
+                f"({gen_date!r}); defaulted to analyze.\n"
+            )
+            return 0
+    else:
+        # Newest record has no date metadata — escalate
+        print("analyze")
+        return 0
+
+    print("quick")
+    return 0
+
+
+def cmd_doctor(args):
+    """Health check. Exit codes:
+        0 — healthy: SDK present, key present, index exists, vectors > 0,
+            embedding model matches PINECONE_EMBED_MODEL, archive folder set.
+        1 — degraded: missing optional Drive folder ID, embedding-model drift,
+            or empty index.
+        2 — unavailable: SDK missing, key missing, or index missing.
+    """
+    severity = 0  # 0 healthy, 1 degraded, 2 unavailable
+    lines = []
+
+    def _line(symbol, msg):
+        lines.append(f"  {symbol} {msg}")
+
+    def _escalate(level):
+        nonlocal severity
+        if level > severity:
+            severity = level
+
+    # 1. SDK
+    try:
+        from pinecone import Pinecone  # noqa: F401
+        _line("✓", "Pinecone SDK importable (`pinecone`)")
+    except ImportError:
+        _line("✗", "Pinecone SDK missing — run `pip install 'pinecone>=5'`")
+        _escalate(2)
+        # No point continuing the checks that depend on the SDK
+        _emit_doctor_report(severity, lines)
+        return severity
+
+    # 2. API key
+    if not os.environ.get("PINECONE_API_KEY"):
+        _line(
+            "✗",
+            "PINECONE_API_KEY not set — `cp .env.example .env`, paste key, "
+            "`set -a; source .env; set +a`",
+        )
+        _escalate(2)
+        _emit_doctor_report(severity, lines)
+        return severity
+    _line("✓", "PINECONE_API_KEY present")
+
+    # 3+. Live index checks (only safe to do once SDK + key are in hand)
+    store = VectorStore(namespace=args.namespace)
+    try:
+        if not store.index_exists():
+            _line(
+                "✗",
+                f"Index '{store.index_name}' does not exist — run "
+                "`trade_memory.py init`",
+            )
+            _escalate(2)
+            _emit_doctor_report(severity, lines)
+            return severity
+        _line("✓", f"Index '{store.index_name}' exists in {store.cloud}/{store.region}")
+
+        # Embedding-model drift check (warn-only; don't fail loudly)
+        try:
+            idx_model = store.describe_index()
+            embed_info = getattr(idx_model, "embed", None) or {}
+            stored_model = embed_info.get("model") if hasattr(embed_info, "get") else (
+                getattr(embed_info, "model", None)
+            )
+            if stored_model and stored_model != store.embed_model:
+                _line(
+                    "⚠",
+                    f"Embedding-model drift: index='{stored_model}' vs "
+                    f"PINECONE_EMBED_MODEL='{store.embed_model}'. New ingests "
+                    "will use the index's model; queries should match.",
+                )
+                _escalate(1)
+            elif stored_model:
+                _line("✓", f"Embedding model: {stored_model}")
+        except Exception as e:
+            _line("⚠", f"Could not read index embedding-model spec ({e})")
+            _escalate(1)
+
+        # Vector counts
+        try:
+            stats = store.describe_stats()
+            namespaces = stats.namespaces if hasattr(stats, "namespaces") else (
+                stats.get("namespaces", {})
+            )
+            ns_info = namespaces.get(store.namespace) if hasattr(namespaces, "get") else None
+            count = 0
+            if ns_info is not None:
+                count = (
+                    getattr(ns_info, "vector_count", None)
+                    if not hasattr(ns_info, "get")
+                    else ns_info.get("vector_count", 0)
+                ) or 0
+            total = getattr(stats, "total_vector_count", None) or (
+                stats.get("total_vector_count", 0) if hasattr(stats, "get") else 0
+            )
+            if count == 0:
+                _line(
+                    "⚠",
+                    f"Namespace '{store.namespace}' is empty "
+                    f"({total} vectors across all namespaces). "
+                    "Run `ingest` or `rebuild` to populate.",
+                )
+                _escalate(1)
+            else:
+                _line(
+                    "✓",
+                    f"Namespace '{store.namespace}': {count} vector(s) "
+                    f"({total} across all namespaces)",
+                )
+        except Exception as e:
+            _line("⚠", f"Could not read index stats ({e})")
+            _escalate(1)
+
+    except Exception as e:
+        _line("✗", f"Live index check failed ({e})")
+        _escalate(2)
+        _emit_doctor_report(severity, lines)
+        return severity
+
+    # 4. Drive archive folder ID (optional but flagged)
+    if os.environ.get("TRADE_DRIVE_ARCHIVE_FOLDER_ID"):
+        _line(
+            "✓",
+            "TRADE_DRIVE_ARCHIVE_FOLDER_ID set "
+            "(value hidden; --archive will request Drive uploads via the skill)",
+        )
+    else:
+        _line(
+            "⚠",
+            "TRADE_DRIVE_ARCHIVE_FOLDER_ID unset — `ingest --archive` will "
+            "emit a setup hint and skip the Drive upload. Set this to enable "
+            "Drive mirroring.",
+        )
+        _escalate(1)
+
+    # 5. Drive MCP availability — Python can't introspect this, surface it
+    _line(
+        "?",
+        "Drive MCP availability: not detectable from Python. "
+        "If the skill has access to `mcp__claude_ai_Google_Drive__*` tools, "
+        "archive uploads will work.",
+    )
+
+    # 6. Proxy mode (slice 7.5 lookahead)
+    if os.environ.get("PINECONE_PROXY_URL") or os.environ.get("PINECONE_PROXY_TOKEN"):
+        _line(
+            "⚠",
+            "PINECONE_PROXY_URL / _TOKEN set, but cloud-proxy mode is not yet "
+            "implemented (slice 7.5). All ops still use the SDK directly.",
+        )
+        _escalate(1)
+
+    _emit_doctor_report(severity, lines)
+    return severity
+
+
+def _emit_doctor_report(severity: int, lines):
+    state = {0: "HEALTHY", 1: "DEGRADED", 2: "UNAVAILABLE"}[severity]
+    print(f"trade_memory.py doctor — {state}")
+    for ln in lines:
+        print(ln)
+
+
+# ---------------------------------------------------------------------------
 # argparse plumbing
 # ---------------------------------------------------------------------------
 
@@ -498,9 +1253,11 @@ def build_parser():
         "--namespace",
         metavar="NS",
         help=(
-            "Override PINECONE_NAMESPACE for this invocation. "
-            "Slice 3a only honors 'trade'; slice 3b/7.5 will expand the "
-            "allowlist for consumer namespaces."
+            "Override PINECONE_NAMESPACE for this invocation. Plumbed into "
+            "every subcommand; writes additionally require the namespace to "
+            "be in trade_schemas.ALLOWED_NAMESPACES (currently 'trade'). "
+            "The trading-chatbot will register per-user namespaces in "
+            "slice 7.5."
         ),
     )
     sub = p.add_subparsers(dest="cmd", required=True)
@@ -523,6 +1280,18 @@ def build_parser():
             "format: routine-<YYYYMMDD-HHMM>-<6hex>)."
         ),
     )
+    p_ingest.add_argument(
+        "--archive",
+        action="store_true",
+        help=(
+            "Also mirror the report to Drive under "
+            "<TRADE_DRIVE_ARCHIVE_FOLDER_ID>/<TICKER>/<basename>. "
+            "Emits a [archive-todo] JSON line on stderr that the calling "
+            "skill executes via Google_Drive MCP tools; Python cannot invoke "
+            "MCP directly. If the env var is unset, prints a setup hint and "
+            "skips Drive (Pinecone upsert still succeeds)."
+        ),
+    )
     p_ingest.set_defaults(func=cmd_ingest)
 
     p_query = sub.add_parser(
@@ -539,6 +1308,100 @@ def build_parser():
         "-n", type=int, default=5, help="Top-K hits (default 5)"
     )
     p_query.set_defaults(func=cmd_query)
+
+    # --- slice 3b subcommands ---
+
+    p_latest = sub.add_parser(
+        "latest",
+        help="Newest record's metadata as JSON (filtered by --type).",
+    )
+    p_latest.add_argument("ticker", help="Ticker symbol (UPPERCASE)")
+    p_latest.add_argument(
+        "--type",
+        help="Filter to a single report_type (ANALYSIS/THESIS/QUICK/...)",
+    )
+    p_latest.set_defaults(func=cmd_latest)
+
+    p_list = sub.add_parser(
+        "list",
+        help="Manifest listing across the namespace (default limit 100).",
+    )
+    p_list.add_argument("--ticker", help="Filter to a single ticker")
+    p_list.add_argument(
+        "--type", help="Filter to a single report_type"
+    )
+    p_list.add_argument(
+        "--limit", type=int, default=100, help="Max records to print (default 100)"
+    )
+    p_list.set_defaults(func=cmd_list)
+
+    p_timeline = sub.add_parser(
+        "timeline",
+        help="All reports for a ticker, oldest→newest.",
+    )
+    p_timeline.add_argument("ticker", help="Ticker symbol (UPPERCASE)")
+    p_timeline.add_argument(
+        "--since",
+        help="Cutoff date (YYYY-MM-DD); defaults to 12 months ago",
+    )
+    p_timeline.add_argument(
+        "--limit", type=int, default=50, help="Max reports to show (default 50)"
+    )
+    p_timeline.set_defaults(func=cmd_timeline)
+
+    p_delete = sub.add_parser(
+        "delete",
+        help="GC records for a ticker. Confirms unless --yes.",
+    )
+    p_delete.add_argument("--ticker", required=True, help="Ticker to delete")
+    p_delete.add_argument(
+        "--before",
+        help=(
+            "Only delete records dated strictly before YYYY-MM-DD "
+            "(keeps newer records)"
+        ),
+    )
+    p_delete.add_argument(
+        "--yes", action="store_true", help="Skip the interactive confirmation"
+    )
+    p_delete.set_defaults(func=cmd_delete)
+
+    p_rebuild = sub.add_parser(
+        "rebuild",
+        help="Re-ingest every TRADE-*.md under a local directory.",
+    )
+    p_rebuild.add_argument(
+        "source",
+        help=(
+            "Local directory containing TRADE-*.md files. "
+            "Drive folder IDs are NOT supported here — Python cannot call "
+            "the Drive MCP tools; have the calling skill download to a local "
+            "dir first."
+        ),
+    )
+    p_rebuild.add_argument(
+        "--exclude-ticker",
+        help="Comma-separated tickers to skip (e.g. tickers that left the portfolio)",
+    )
+    p_rebuild.set_defaults(func=cmd_rebuild)
+
+    p_tier = sub.add_parser(
+        "recommend-tier",
+        help=(
+            "Print 'analyze' or 'quick' for the next sweep. "
+            "Pinecone-unavailable safely prints 'analyze' and exits 0."
+        ),
+    )
+    p_tier.add_argument("ticker", help="Ticker symbol (UPPERCASE)")
+    p_tier.set_defaults(func=cmd_recommend_tier)
+
+    p_doctor = sub.add_parser(
+        "doctor",
+        help=(
+            "Health check. Exit 0 healthy / 1 degraded / 2 unavailable."
+        ),
+    )
+    p_doctor.set_defaults(func=cmd_doctor)
 
     return p
 
