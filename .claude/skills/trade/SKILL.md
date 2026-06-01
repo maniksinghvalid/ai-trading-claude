@@ -25,6 +25,7 @@ You are a comprehensive AI trading research and analysis system for Claude Code.
 | `/trade portfolio` | Portfolio analysis & rebalancing recommendations | TRADE-PORTFOLIO.md |
 | `/trade holdings` | Read holdings from Google Drive (InvestmentSummary folder); writes cache used by `/trade routine` | TRADE-HOLDINGS.md (+ `~/.claude/trade/` cache) |
 | `/trade routine [--max-escalations N]` | Tiered daily sweep over the portfolio: per-ticker `recommend-tier` → analyze/quick dispatch, escalation on signal change, digest writer | TRADE-ROUTINE-[ts].md (+ per-ticker analyze/quick reports) |
+| `/trade recall "<query>" [TICKER] [--type T] [-n N]` | Semantic search over past TRADE-*.md reports; cited findings with date + report_type on every quote | Terminal output (cited findings block) |
 | `/trade risk <ticker>` | Risk assessment & position sizing | TRADE-RISK-[TICKER].md |
 | `/trade screen <criteria>` | Stock screener by strategy/criteria | TRADE-SCREEN-[CRITERIA].md |
 | `/trade earnings <ticker>` | Pre-earnings analysis & expected move | TRADE-EARNINGS-[TICKER].md |
