@@ -222,13 +222,17 @@ JSONEOF
 
 ### 4b: Run the PDF Generation Script
 
-Execute the Python PDF generator:
+Execute the Python PDF generator, **passing the JSON path as the first CLI argument
+and the output PDF path as the second** — the script's no-arg mode is DEMO mode and
+will ignore `/tmp/trade_report_data.json` entirely (see `CLAUDE.md` "PDF generator
+gotcha"):
 
 ```bash
-python3 ~/.claude/skills/trade/scripts/generate_trade_pdf.py
+python3 ~/.claude/skills/trade/scripts/generate_trade_pdf.py /tmp/trade_report_data.json TRADE-REPORT.pdf
 ```
 
-The script reads from `/tmp/trade_report_data.json` and outputs `TRADE-REPORT.pdf` in the current directory.
+The script reads the payload from the path given as `argv[1]` and writes the PDF to
+`argv[2]` (or `TRADE-REPORT.pdf` in the current directory if `argv[2]` is omitted).
 
 ### 4c: Handle Script Absence
 
@@ -337,6 +341,7 @@ For each analyzed stock:
 | Strong Buy | Green | #22763d |
 | Buy | Light Green | #48bb78 |
 | Hold | Yellow/Amber | #d69e2e |
+| Neutral | Slate Gray | #94a3b8 |
 | Caution | Orange | #dd6b20 |
 | Avoid | Red | #c53030 |
 | Background | White | #ffffff |

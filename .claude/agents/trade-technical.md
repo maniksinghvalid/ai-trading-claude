@@ -95,7 +95,16 @@ Determine and report:
 
 ### Step 4: Determine Signal
 
-Based on the composite technical score:
+> **Per-dimension table (slice 1 cleanup, do not "align" to composite).** This is the
+> **per-dimension technical signal** — NOT the composite 6-band trade signal. The score
+> band boundaries here (80/65/50/35/0) are dimension-specific and intentionally distinct
+> from the canonical composite 6-band table (85/70/55/40/25/0 → STRONG BUY/BUY/HOLD/
+> NEUTRAL/CAUTION/AVOID) documented in `trade/SKILL.md:57-64` and produced by
+> `scripts/trade_scoring.py`. The composite signal is assembled by
+> `skills/trade-analyze/SKILL.md` from the 5 weighted dimensions; this technical-only
+> table feeds into that synthesis and is not itself a composite output.
+
+Based on the composite technical score (within this dimension):
 
 | Score | Signal |
 |-------|--------|
