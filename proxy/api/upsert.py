@@ -7,11 +7,7 @@ embedding by ``llama-text-embed-v2``). The ``values?`` accept-shape keeps
 the proxy useful for future callers that pre-embed.
 """
 
-import sys
-import pathlib
-sys.path.insert(0, str(pathlib.Path(__file__).resolve().parent.parent))
-
-from _lib import handler, pinecone_client, validate
+from _lib import pinecone_client, validate
 
 
 def upsert_op(body: dict) -> dict:
@@ -69,4 +65,3 @@ def upsert_op(body: dict) -> dict:
     return results
 
 
-handler = handler.make_handler(upsert_op, endpoint="upsert")

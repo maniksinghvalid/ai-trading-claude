@@ -2,11 +2,7 @@
 REQUIRED (no accidental bulk wipes).
 """
 
-import sys
-import pathlib
-sys.path.insert(0, str(pathlib.Path(__file__).resolve().parent.parent))
-
-from _lib import handler, pinecone_client, validate
+from _lib import pinecone_client, validate
 
 
 def delete_op(body: dict) -> dict:
@@ -29,4 +25,3 @@ def delete_op(body: dict) -> dict:
     return {"deleted_count": None, "by": "filter"}
 
 
-handler = handler.make_handler(delete_op, endpoint="delete")

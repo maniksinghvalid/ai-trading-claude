@@ -2,11 +2,7 @@
 match the RECORD_ID_PATTERN contract.
 """
 
-import sys
-import pathlib
-sys.path.insert(0, str(pathlib.Path(__file__).resolve().parent.parent))
-
-from _lib import handler, pinecone_client, validate
+from _lib import pinecone_client, validate
 
 
 def fetch_op(body: dict) -> dict:
@@ -27,4 +23,3 @@ def fetch_op(body: dict) -> dict:
     return {"records": out}
 
 
-handler = handler.make_handler(fetch_op, endpoint="fetch")

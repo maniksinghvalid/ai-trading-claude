@@ -2,11 +2,7 @@
 guard against full-namespace enumeration). Limit capped at 1000.
 """
 
-import sys
-import pathlib
-sys.path.insert(0, str(pathlib.Path(__file__).resolve().parent.parent))
-
-from _lib import handler, pinecone_client, validate
+from _lib import pinecone_client, validate
 
 
 def list_op(body: dict) -> dict:
@@ -43,4 +39,3 @@ def list_op(body: dict) -> dict:
     return {"ids": ids, "next_pagination_token": next_token}
 
 
-handler = handler.make_handler(list_op, endpoint="list")

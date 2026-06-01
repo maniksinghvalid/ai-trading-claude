@@ -290,28 +290,35 @@ the regression catch.
 
 ```
 proxy/
-├── api/                    # Vercel serverless functions (one per endpoint)
-│   ├── upsert.py
-│   ├── query.py
-│   ├── list.py
-│   ├── fetch.py
-│   └── delete.py
-├── _lib/                   # Shared helpers — imported by every endpoint
+├── app.py                  # Single WSGI entrypoint — Vercel imports `app`
+├── api/                    # Per-endpoint op_fn callables (imported by app.py)
+│   ├── __init__.py
+│   ├── upsert.py           # upsert_op(body)
+│   ├── query.py            # query_op(body)
+│   ├── list.py             # list_op(body)
+│   ├── fetch.py            # fetch_op(body)
+│   └── delete.py           # delete_op(body)
+├── _lib/                   # Shared helpers
 │   ├── auth.py             # Constant-time bearer compare
 │   ├── validate.py         # Imports trade_schemas + per-endpoint Pydantic models
 │   ├── ratelimit.py        # Upstash REST with no-op fallback
 │   ├── pinecone_client.py  # Singleton Pinecone client
-│   ├── responses.py        # JSON helpers
-│   └── handler.py          # Shared BaseHTTPRequestHandler boilerplate
+│   └── responses.py        # JSON helpers
 ├── requirements.txt        # pinecone>=5, pydantic>=2
-├── vercel.json             # function config + includeFiles + URL rewrites
+├── vercel.json             # Single-function config pointing at app.py
 ├── .env.example            # template; real values live in Vercel UI
 └── README.md               # this file
 ```
 
+Vercel's modern Python runtime requires a single WSGI/ASGI entrypoint
+(`app.py` is one of the auto-detected names). `app.py` dispatches each
+POST request to the matching `*_op(body)` callable in `api/`. The per-file
+files in `api/` are NOT deployed as individual serverless functions — they
+just hold the endpoint logic that `app.py` imports.
+
 `scripts/trade_schemas.py` (one directory up) is bundled into the function
-deploy via `vercel.json`'s `includeFiles` config and located at
-runtime by `proxy/_lib/validate.py`'s `_import_trade_schemas()` helper.
+deploy via `vercel.json`'s `includeFiles` config and located at runtime
+by `proxy/_lib/validate.py`'s `_import_trade_schemas()` helper.
 
 ---
 

@@ -2,11 +2,7 @@
 (vector). ``top_k`` capped at 50; ``filter`` keys must be schema fields.
 """
 
-import sys
-import pathlib
-sys.path.insert(0, str(pathlib.Path(__file__).resolve().parent.parent))
-
-from _lib import handler, pinecone_client, validate
+from _lib import pinecone_client, validate
 
 
 def _serialize_hits(response) -> list:
@@ -80,4 +76,3 @@ def query_op(body: dict) -> dict:
     return {"hits": _serialize_hits(response)}
 
 
-handler = handler.make_handler(query_op, endpoint="query")
