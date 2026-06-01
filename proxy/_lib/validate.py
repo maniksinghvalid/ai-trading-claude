@@ -4,62 +4,23 @@ Layer 3 of the 5-layer auth model. Schema lockdown is the structural defense
 even if the bearer leaks: an attacker can only write contract-valid records
 to allowed namespaces.
 
-Imports the canonical ``RecordMetadata`` + ``ALLOWED_NAMESPACES`` +
-``RECORD_ID_PATTERN`` from ``scripts/trade_schemas.py`` so the proxy
-boundary stays in lockstep with what the producer writes (D.17 +
-D.19 gates).
+Imports the schema module from a **vendored copy** at
+``proxy/_lib/trade_schemas.py`` (synced from the canonical
+``scripts/trade_schemas.py`` via ``scripts/sync_proxy_schemas.sh``). The
+vendored-copy approach keeps the Vercel deploy self-contained — no
+``vercel.json includeFiles`` reaching outside the project root, no
+``importlib.util.spec_from_file_location`` path-resolution gymnastics
+at module load.
 
-Single-source-of-truth resolution: at Vercel runtime,
-``scripts/trade_schemas.py`` is bundled into the function via
-``vercel.json``'s ``includeFiles``; we locate it via
-``importlib.util.spec_from_file_location`` so the import works regardless
-of sys.path quirks.
+The D.17 gate verifies the proxy copy stays byte-identical to the
+canonical on every commit.
 """
 
-import importlib.util
-import os
-import pathlib
 from typing import List, Optional
 
 from pydantic import BaseModel, ConfigDict, Field, field_validator
 
-
-# ---------------------------------------------------------------------------
-# trade_schemas import — finds the bundled file at deploy time
-# ---------------------------------------------------------------------------
-
-def _import_trade_schemas():
-    """Locate scripts/trade_schemas.py and import it as ``trade_schemas``.
-
-    Search order:
-    1. ``TRADE_SCHEMAS_PATH`` env var (deploy-time override)
-    2. ``/var/task/scripts/trade_schemas.py`` (Vercel runtime layout when
-       vercel.json's includeFiles bundles ../scripts/trade_schemas.py)
-    3. ``<this file's grandparent>/scripts/trade_schemas.py`` (repo-local
-       dev: proxy/_lib/validate.py → ai-trading-claude/scripts/...)
-    """
-    candidates = []
-    env_path = os.environ.get("TRADE_SCHEMAS_PATH")
-    if env_path:
-        candidates.append(pathlib.Path(env_path))
-    candidates.append(pathlib.Path("/var/task/scripts/trade_schemas.py"))
-    here = pathlib.Path(__file__).resolve()
-    candidates.append(here.parent.parent.parent / "scripts" / "trade_schemas.py")
-
-    for path in candidates:
-        if path.exists():
-            spec = importlib.util.spec_from_file_location("trade_schemas", path)
-            mod = importlib.util.module_from_spec(spec)
-            spec.loader.exec_module(mod)
-            return mod
-
-    raise ImportError(
-        "Could not locate scripts/trade_schemas.py. Set TRADE_SCHEMAS_PATH "
-        "or check vercel.json includeFiles."
-    )
-
-
-trade_schemas = _import_trade_schemas()
+from . import trade_schemas
 RecordMetadata = trade_schemas.RecordMetadata
 ALLOWED_NAMESPACES = trade_schemas.ALLOWED_NAMESPACES
 RECORD_ID_PATTERN = trade_schemas.RECORD_ID_PATTERN
