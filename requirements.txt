@@ -1,1 +1,7 @@
 reportlab>=4.0
+# Slice 3a: memory layer (Pinecone vector store + Pydantic schemas).
+# Optional for the PDF generator and pure-analysis skills; required only when
+# running scripts/trade_memory.py. The trade_schemas module imports pydantic
+# unconditionally — install both before exercising slice 3a verifications.
+pinecone>=5
+pydantic>=2
