@@ -17,7 +17,42 @@ This skill activates when the user runs:
 
 ## Input Collection
 
-### Step 1: Gather Holdings
+### Step 0: Try Drive-first via `/trade holdings`
+
+Before prompting the user, attempt to read their holdings from Google Drive
+via the **`/trade holdings`** skill. This is the new Drive-first path
+introduced in slice 5 — if it succeeds you skip the interactive paste
+entirely.
+
+Run the holdings skill:
+1. Look for the cached fallback at `~/.claude/trade/TRADE-HOLDINGS.md`
+   first. If it exists and is < 24 hours old, parse it and proceed to
+   Step 0a below.
+2. Otherwise dispatch `/trade holdings` to refresh from Drive. It will
+   write/refresh both the cache and a CWD `TRADE-HOLDINGS.md`.
+
+**Step 0a — Holdings parse:** Read the `TRADE-HOLDINGS.md` produced by
+`/trade holdings` (frontmatter + `## Tickers` bullet list). Use those
+tickers as the holdings input and **skip Step 1**. Then ask the user only
+for share counts or dollar amounts in a quick line-by-line confirmation:
+```
+Found 14 tickers from Drive. Please confirm shares/value:
+  AAPL: ___ shares (or $___)
+  ...
+```
+If the user provides nothing, treat each holding as equal-weight (1 share)
+for purposes of allocation analysis and clearly note: "Position sizes not
+provided — analysis treats holdings as equal-weight."
+
+**Step 0b — Fallback:** If `/trade holdings` fails (Drive MCP not
+connected, no holdings file found, extraction returned zero tickers, or
+the user explicitly asks to paste manually), fall through to Step 1's
+interactive paste. **Never** silently exit — always either get the
+holdings from Drive OR prompt the user. The slice-5 gate verifies this
+("`/trade portfolio` without Drive falls back to interactive — no silent
+failure").
+
+### Step 1: Gather Holdings (manual paste fallback)
 
 Ask the user to provide their holdings in one of these formats:
 

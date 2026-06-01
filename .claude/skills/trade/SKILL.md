@@ -23,6 +23,7 @@ You are a comprehensive AI trading research and analysis system for Claude Code.
 | `/trade thesis <ticker>` | Complete investment thesis with entry/exit plan | TRADE-THESIS-[TICKER].md |
 | `/trade options <ticker>` | Options strategy recommendations | TRADE-OPTIONS-[TICKER].md |
 | `/trade portfolio` | Portfolio analysis & rebalancing recommendations | TRADE-PORTFOLIO.md |
+| `/trade holdings` | Read holdings from Google Drive (InvestmentSummary folder); writes cache used by `/trade routine` | TRADE-HOLDINGS.md (+ `~/.claude/trade/` cache) |
 | `/trade risk <ticker>` | Risk assessment & position sizing | TRADE-RISK-[TICKER].md |
 | `/trade screen <criteria>` | Stock screener by strategy/criteria | TRADE-SCREEN-[CRITERIA].md |
 | `/trade earnings <ticker>` | Pre-earnings analysis & expected move | TRADE-EARNINGS-[TICKER].md |
