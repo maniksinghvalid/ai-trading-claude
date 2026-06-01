@@ -23,6 +23,7 @@ class handler(BaseHTTPRequestHandler):
         self.wfile.write(json.dumps({
             "ok": True,
             "note": "smoke endpoint — proves Vercel can run a Python function",
+            "deploy_marker": "fresh-build-after-vendored-schemas",
         }).encode("utf-8"))
 
     def do_GET(self):
