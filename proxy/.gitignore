@@ -1,0 +1,10 @@
+# Vercel local state — NEVER commit
+.vercel/
+.env
+.env.*
+!.env.example
+
+# Python
+__pycache__/
+*.pyc
+.venv/

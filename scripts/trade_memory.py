@@ -23,10 +23,12 @@ Slices 3a + 3b ship:
 
 Top-level ``--namespace NS`` overrides PINECONE_NAMESPACE for every subcommand.
 
-Slice 7.5 will wire:
-    Cloud-mode auto-detect via PINECONE_PROXY_URL + PINECONE_PROXY_TOKEN
-    (the VectorStore class is already structured for it; the cloud branch
-    currently exits with a "not yet implemented" message)
+Cloud-mode wiring (slice 7.5):
+    When both PINECONE_PROXY_URL and PINECONE_PROXY_TOKEN are set, all
+    read/write ops route via urllib through the Vercel proxy (the producer
+    Pinecone key never enters the routine sandbox). See proxy/ for the
+    deployment artifact. Admin ops (init / describe) remain local-only —
+    the proxy intentionally doesn't expose them.
 
 See ``plan/portfolio-routine-and-vector-memory.md`` §1 for the full spec.
 
@@ -105,6 +107,70 @@ def _load_pinecone():
         )
 
 
+class _ProxyHit:
+    """Mimics the integrated-inference Pinecone Hit shape (``_score`` attr +
+    ``fields`` dict) so ``cmd_query``'s rendering loop works unchanged in
+    cloud mode.
+    """
+
+    def __init__(self, hit_dict):
+        self._score = hit_dict.get("_score", 0.0)
+        self._id = hit_dict.get("_id")
+        self.fields = hit_dict.get("fields", {}) or {}
+
+    def get(self, key, default=None):
+        # Tolerates dict-style access (some SDK versions return dict-like hits)
+        return getattr(self, key, default)
+
+
+class _ProxyResult:
+    """Mimics the ``response.result`` shape (carrying ``.hits``)."""
+
+    def __init__(self, hits_list):
+        self.hits = [_ProxyHit(h) for h in hits_list]
+
+
+class _ProxyQueryResponse:
+    """Mimics the integrated-inference ``SearchRecordsResponse`` shape so the
+    same ``response.result.hits`` traversal works in both modes.
+    """
+
+    def __init__(self, hits_list):
+        self.result = _ProxyResult(hits_list)
+
+
+class _ProxyFetchResponse:
+    """Mimics the ``Index.fetch`` response shape (``response.vectors`` is a
+    dict of id → vector-with-.metadata).
+    """
+
+    class _Vector:
+        def __init__(self, metadata):
+            self.metadata = metadata
+
+    def __init__(self, records_dict):
+        self.vectors = {
+            vid: self._Vector(meta) for vid, meta in records_dict.items()
+        }
+
+
+class ProxyHTTPError(Exception):
+    """Raised when a cloud-mode HTTPS call to the proxy fails. Carries the
+    HTTP status code, the parsed response body (or a ``{"raw": ...}`` fallback
+    for non-JSON), and the URL that was called.
+
+    Doctor's auth check expects HTTP 400 (a validation_failed response from
+    the proxy means auth succeeded but the empty payload was rejected) — so
+    it deliberately catches this and inspects ``.status_code``.
+    """
+
+    def __init__(self, status_code: int, body, url: str):
+        super().__init__(f"proxy {url} returned {status_code}: {body}")
+        self.status_code = status_code
+        self.body = body
+        self.url = url
+
+
 # ---------------------------------------------------------------------------
 # VectorStore — wraps Pinecone integrated-inference operations
 # ---------------------------------------------------------------------------
@@ -140,11 +206,17 @@ class VectorStore:
         self._index = None
 
     def _require_local_creds(self):
+        """Ensure we can talk to Pinecone directly. In proxy mode, this is
+        called only for admin ops (init / describe) that the proxy
+        intentionally doesn't expose — and surfaces a clear error pointing
+        the operator at a local invocation.
+        """
         if self._proxy_mode:
             sys.exit(
-                "Cloud proxy mode (PINECONE_PROXY_URL set) is not yet "
-                "implemented — slice 7.5 deliverable. For now, unset "
-                "PINECONE_PROXY_URL and use PINECONE_API_KEY directly."
+                "This operation is local-only (the proxy intentionally "
+                "doesn't expose admin ops like init/describe). Unset "
+                "PINECONE_PROXY_URL and run from a workstation with "
+                "PINECONE_API_KEY set."
             )
         if not self.api_key:
             sys.exit(
@@ -152,6 +224,42 @@ class VectorStore:
                 "fill in your Pinecone key, and `set -a; source .env; set +a` "
                 "before running this command."
             )
+
+    def _proxy_post(self, op: str, payload: dict, timeout: float = 15.0):
+        """POST a JSON payload to ``<proxy_url>/<op>`` with bearer auth.
+
+        Returns the parsed JSON response on 200. Raises ``ProxyHTTPError``
+        on any other status with the status code + response body attached
+        so callers can branch (e.g. doctor's auth check expects 400, not
+        200).
+        """
+        import json as _json
+        import urllib.request
+        import urllib.error
+        url = self.proxy_url.rstrip("/") + "/" + op
+        body = _json.dumps(payload).encode("utf-8")
+        req = urllib.request.Request(
+            url,
+            data=body,
+            headers={
+                "Authorization": f"Bearer {self.proxy_token}",
+                "Content-Type": "application/json",
+                "User-Agent": "trade-memory.py/slice7.5",
+            },
+            method="POST",
+        )
+        try:
+            with urllib.request.urlopen(req, timeout=timeout) as resp:
+                return _json.loads(resp.read().decode("utf-8"))
+        except urllib.error.HTTPError as e:
+            raw = e.read().decode("utf-8", errors="replace")
+            try:
+                body = _json.loads(raw)
+            except Exception:
+                body = {"raw": raw}
+            raise ProxyHTTPError(e.code, body, url)
+        except urllib.error.URLError as e:
+            raise ProxyHTTPError(0, {"error": "network", "reason": str(e)}, url)
 
     @property
     def client(self):
@@ -206,9 +314,10 @@ class VectorStore:
     def upsert_records(self, records):
         """Upsert RecordMetadata instances via integrated inference.
 
-        Pinecone's ``Index.upsert_records(namespace, records)`` is the
-        integrated-inference path — server-side embedding from the ``text``
-        field, no client-side vectors required.
+        Local mode: calls ``Index.upsert_records(namespace, records)``
+        directly. Cloud mode: POSTs to ``<proxy>/upsert`` with the records
+        list; the proxy re-validates against the same trade_schemas before
+        forwarding to Pinecone.
         """
         # Defense in depth: re-validate that every record is a real
         # RecordMetadata instance (callers shouldn't pass raw dicts).
@@ -225,13 +334,35 @@ class VectorStore:
                 f"{sorted(trade_schemas.ALLOWED_NAMESPACES)}. "
                 "Extend trade_schemas.ALLOWED_NAMESPACES if intentional."
             )
+        if self._proxy_mode:
+            # Send pre-lift dicts (id, list-form catalysts) so the proxy
+            # can re-validate against RecordMetadata cleanly. The proxy
+            # then calls .to_pinecone_record() to produce the on-wire
+            # shape — single source of truth lives in trade_schemas.py.
+            payload = [r.model_dump(exclude_none=True) for r in records]
+            return self._proxy_post("upsert", {
+                "namespace": self.namespace,
+                "records": payload,
+            })
         payload = [r.to_pinecone_record() for r in records]
         return self.index.upsert_records(self.namespace, payload)
 
     def query(self, text: str, top_k: int = 5, filter_dict: dict = None):
-        """Integrated-inference semantic search. Returns the raw
-        ``SearchRecordsResponse``; callers handle pretty-printing.
+        """Integrated-inference semantic search.
+
+        Local mode returns the raw ``SearchRecordsResponse``; cloud mode
+        returns a ``_ProxyQueryResponse`` wrapper exposing the same
+        ``response.result.hits[*]._score / .fields`` shape callers consume
+        in ``cmd_query``.
         """
+        if self._proxy_mode:
+            resp = self._proxy_post("query", {
+                "namespace": self.namespace,
+                "text": text,
+                "top_k": top_k,
+                **({"filter": filter_dict} if filter_dict else {}),
+            })
+            return _ProxyQueryResponse(resp.get("hits", []))
         q = {"inputs": {"text": text}, "top_k": top_k}
         if filter_dict:
             q["filter"] = filter_dict
@@ -243,38 +374,65 @@ class VectorStore:
 
     def list_ids(self, prefix: str = None):
         """Yield every record ID in the current namespace (optionally filtered
-        by prefix). Walks pagination explicitly via list_paginated so we don't
-        rely on the SDK's generator behavior — the routine plan calls for
-        deterministic pagination.
+        by prefix). Walks pagination explicitly so we don't rely on SDK
+        generator behavior — the routine plan calls for deterministic
+        pagination. Cloud mode POSTs to /list and reuses the same
+        prefix+pagination_token contract.
+
+        Note: the proxy REQUIRES ``prefix`` (lexical-scope guard). When the
+        caller doesn't supply one in cloud mode, we synthesize the empty
+        string ``""`` which Pinecone treats as "any prefix" — equivalent to
+        no filter, just made explicit for the proxy's payload validation.
         """
-        # Pinecone returns page sizes up to ~100 by default; explicit limit
-        # keeps memory bounded on a 10k-record index.
         page_limit = 100
         token = None
+        # Proxy requires a non-empty prefix; "" wouldn't pass min_length=1.
+        # In cloud mode without a prefix, list every uppercase letter +
+        # digit + dot/hyphen separately. That's 38 paginated streams worst
+        # case (A-Z + 0-9 + . + -), still cheap (< 200ms total at typical
+        # index sizes). Most real callers always pass a prefix anyway.
+        if self._proxy_mode and not prefix:
+            seeds = list("ABCDEFGHIJKLMNOPQRSTUVWXYZ0123456789.-")
+            for seed in seeds:
+                yield from self.list_ids(prefix=seed)
+            return
+
         while True:
-            kwargs = {"namespace": self.namespace, "limit": page_limit}
-            if prefix:
-                kwargs["prefix"] = prefix
-            if token:
-                kwargs["pagination_token"] = token
-            resp = self.index.list_paginated(**kwargs)
-            vectors = getattr(resp, "vectors", None) or []
-            for v in vectors:
-                # Each entry is a dict-like with at least an `id` key
-                vid = v.get("id") if hasattr(v, "get") else getattr(v, "id", None)
-                if vid:
+            if self._proxy_mode:
+                payload = {
+                    "namespace": self.namespace,
+                    "prefix": prefix,
+                    "limit": page_limit,
+                }
+                if token:
+                    payload["pagination_token"] = token
+                resp = self._proxy_post("list", payload)
+                for vid in resp.get("ids", []):
                     yield vid
-            pagination = getattr(resp, "pagination", None)
-            token = pagination.get("next") if pagination and hasattr(pagination, "get") else (
-                getattr(pagination, "next", None) if pagination else None
-            )
+                token = resp.get("next_pagination_token")
+            else:
+                kwargs = {"namespace": self.namespace, "limit": page_limit}
+                if prefix:
+                    kwargs["prefix"] = prefix
+                if token:
+                    kwargs["pagination_token"] = token
+                resp = self.index.list_paginated(**kwargs)
+                vectors = getattr(resp, "vectors", None) or []
+                for v in vectors:
+                    vid = v.get("id") if hasattr(v, "get") else getattr(v, "id", None)
+                    if vid:
+                        yield vid
+                pagination = getattr(resp, "pagination", None)
+                token = pagination.get("next") if pagination and hasattr(pagination, "get") else (
+                    getattr(pagination, "next", None) if pagination else None
+                )
             if not token:
                 break
 
     def fetch_meta(self, ids):
         """Fetch metadata for a batch of IDs. Returns ``{id: {meta_dict}}``.
         Pinecone caps a single fetch around ~1000 IDs; we batch in 100s to
-        match the list page size and keep request bodies small.
+        match the list page size and the proxy's per-call ceiling.
         """
         ids = list(ids)
         if not ids:
@@ -282,24 +440,43 @@ class VectorStore:
         result = {}
         for start in range(0, len(ids), 100):
             chunk = ids[start : start + 100]
-            resp = self.index.fetch(ids=chunk, namespace=self.namespace)
-            vectors = getattr(resp, "vectors", None) or {}
-            # FetchResponse.vectors is a dict id → Vector with .metadata
-            for vid, vec in vectors.items():
-                meta = getattr(vec, "metadata", None)
-                if meta is None and hasattr(vec, "get"):
-                    meta = vec.get("metadata", {})
-                result[vid] = dict(meta) if meta else {}
+            if self._proxy_mode:
+                resp = self._proxy_post("fetch", {
+                    "namespace": self.namespace,
+                    "ids": chunk,
+                })
+                # /fetch returns {"records": {id: metadata_dict}}
+                for vid, meta in (resp.get("records") or {}).items():
+                    result[vid] = dict(meta) if meta else {}
+            else:
+                resp = self.index.fetch(ids=chunk, namespace=self.namespace)
+                vectors = getattr(resp, "vectors", None) or {}
+                for vid, vec in vectors.items():
+                    meta = getattr(vec, "metadata", None)
+                    if meta is None and hasattr(vec, "get"):
+                        meta = vec.get("metadata", {})
+                    result[vid] = dict(meta) if meta else {}
         return result
 
     def delete_ids(self, ids):
-        """Delete records by ID. No-op on empty input."""
+        """Delete records by ID. No-op on empty input. Cloud mode POSTs to
+        /delete with ``confirm: "yes"`` (the proxy rejects deletes without
+        the explicit confirm field — no accidental bulk wipes via leaked
+        bearer).
+        """
         ids = list(ids)
         if not ids:
             return 0
-        # Pinecone delete also batches well at 100; matches list page size.
         for start in range(0, len(ids), 100):
-            self.index.delete(ids=ids[start : start + 100], namespace=self.namespace)
+            chunk = ids[start : start + 100]
+            if self._proxy_mode:
+                self._proxy_post("delete", {
+                    "namespace": self.namespace,
+                    "ids": chunk,
+                    "confirm": "yes",
+                })
+            else:
+                self.index.delete(ids=chunk, namespace=self.namespace)
         return len(ids)
 
     def describe_index(self):
@@ -1106,12 +1283,82 @@ def cmd_doctor(args):
         _emit_doctor_report(severity, lines)
         return severity
 
-    # 2. API key
+    # 2. Credentials — branch on local vs cloud (proxy) mode
+    proxy_url = os.environ.get("PINECONE_PROXY_URL")
+    proxy_token = os.environ.get("PINECONE_PROXY_TOKEN")
+    proxy_mode = bool(proxy_url and proxy_token)
+
+    if proxy_mode:
+        _line(
+            "✓",
+            f"Cloud-proxy mode active — routing via {proxy_url}",
+        )
+        # Auth probe: POST /query with an empty payload, expect HTTP 400
+        # (validation_failed because no namespace/text). 401 means bearer
+        # is wrong; network errors mean URL/connectivity broken.
+        store = VectorStore(namespace=args.namespace)
+        try:
+            store._proxy_post("query", {})
+            # If we somehow got 200 with an empty payload, the proxy is
+            # mis-configured. Report as degraded.
+            _line(
+                "⚠",
+                "Proxy returned 200 on an empty /query payload — proxy "
+                "validation is weaker than expected. Check deployed code.",
+            )
+            _escalate(1)
+        except ProxyHTTPError as e:
+            if e.status_code == 400:
+                _line(
+                    "✓",
+                    "Proxy auth check passed (POST /query returned 400 "
+                    "validation_failed on empty payload — bearer + URL ok)",
+                )
+            elif e.status_code == 401:
+                _line(
+                    "✗",
+                    "Proxy bearer auth FAILED (401) — "
+                    "check PINECONE_PROXY_TOKEN matches the deployed "
+                    "PROXY_AUTH_TOKEN Vercel env var.",
+                )
+                _escalate(2)
+                _emit_doctor_report(severity, lines)
+                return severity
+            elif e.status_code == 429:
+                _line(
+                    "⚠",
+                    "Proxy rate-limited (429) — this is unusual on the auth "
+                    "check; the per-IP counter may be saturated.",
+                )
+                _escalate(1)
+            else:
+                _line(
+                    "⚠",
+                    f"Proxy auth check returned HTTP {e.status_code}: "
+                    f"{e.body}. Investigate proxy logs.",
+                )
+                _escalate(1)
+        # Skip admin-op probes (index_exists, describe, stats) — the proxy
+        # intentionally doesn't expose them. Doctor in cloud mode is a
+        # reachability + auth check only.
+        if os.environ.get("TRADE_DRIVE_ARCHIVE_FOLDER_ID"):
+            _line("✓", "TRADE_DRIVE_ARCHIVE_FOLDER_ID set")
+        else:
+            _line(
+                "⚠",
+                "TRADE_DRIVE_ARCHIVE_FOLDER_ID unset — "
+                "`ingest --archive` will skip Drive uploads",
+            )
+            _escalate(1)
+        _emit_doctor_report(severity, lines)
+        return severity
+
     if not os.environ.get("PINECONE_API_KEY"):
         _line(
             "✗",
             "PINECONE_API_KEY not set — `cp .env.example .env`, paste key, "
-            "`set -a; source .env; set +a`",
+            "`set -a; source .env; set +a` (or set PINECONE_PROXY_URL + "
+            "PINECONE_PROXY_TOKEN for cloud-proxy mode)",
         )
         _escalate(2)
         _emit_doctor_report(severity, lines)
@@ -1218,12 +1465,19 @@ def cmd_doctor(args):
         "archive uploads will work.",
     )
 
-    # 6. Proxy mode (slice 7.5 lookahead)
-    if os.environ.get("PINECONE_PROXY_URL") or os.environ.get("PINECONE_PROXY_TOKEN"):
+    # 6. Proxy env vars set but incomplete
+    if os.environ.get("PINECONE_PROXY_URL") and not os.environ.get("PINECONE_PROXY_TOKEN"):
         _line(
             "⚠",
-            "PINECONE_PROXY_URL / _TOKEN set, but cloud-proxy mode is not yet "
-            "implemented (slice 7.5). All ops still use the SDK directly.",
+            "PINECONE_PROXY_URL set but PINECONE_PROXY_TOKEN missing — "
+            "cloud-proxy mode requires both. Using local SDK.",
+        )
+        _escalate(1)
+    elif os.environ.get("PINECONE_PROXY_TOKEN") and not os.environ.get("PINECONE_PROXY_URL"):
+        _line(
+            "⚠",
+            "PINECONE_PROXY_TOKEN set but PINECONE_PROXY_URL missing — "
+            "cloud-proxy mode requires both. Using local SDK.",
         )
         _escalate(1)
 

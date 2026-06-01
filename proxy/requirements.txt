@@ -1,0 +1,4 @@
+# Vercel serverless-function dependencies for the AI Trading Analyst proxy.
+# Pinned to majors that match the local trade_memory.py contract (slice 3a).
+pinecone>=5
+pydantic>=2
