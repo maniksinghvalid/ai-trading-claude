@@ -1,6 +1,7 @@
 *.pdf
 *.json
 !scripts/*.json
+!proxy/vercel.json
 __pycache__/
 *.pyc
 .DS_Store

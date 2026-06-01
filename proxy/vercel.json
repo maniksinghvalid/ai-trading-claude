@@ -1,0 +1,8 @@
+{
+  "functions": {
+    "app.py": {
+      "memory": 256,
+      "maxDuration": 10
+    }
+  }
+}
