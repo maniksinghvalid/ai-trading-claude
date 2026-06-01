@@ -169,11 +169,21 @@ routine's responsibility is to harvest that output and build a
 frontmatter so the memory layer can index it.
 
 **Extract from `QUICK_OUTPUT`:**
-- `SIGNAL` — the value on the `SIGNAL:` line; must be one of
-  `STRONG BUY` / `BUY` / `HOLD` / `NEUTRAL` / `CAUTION` / `AVOID`.
-  The /trade quick prose currently emits 4 labels (BUY/HOLD/SELL/AVOID);
-  map SELL → CAUTION when assembling the QUICK record so the frontmatter
-  matches the Signal enum.
+- `SIGNAL` — the value on the `SIGNAL:` line. `/trade quick` emits **4
+  labels** (BUY / HOLD / SELL / AVOID), which must be projected onto the
+  **6-value** Signal enum for the QUICK record's frontmatter:
+
+  | trade-quick emits | QUICK frontmatter signal | Covers Signal-enum values |
+  |---|---|---|
+  | BUY | `BUY` | STRONG BUY, BUY |
+  | HOLD | `HOLD` | HOLD, **NEUTRAL** |
+  | SELL | `CAUTION` | CAUTION |
+  | AVOID | `AVOID` | AVOID |
+
+  `HOLD` covering both `HOLD` (score 55–69) and `NEUTRAL` (40–54) is the
+  intentional consequence of trade-quick's coarser signal grammar — the
+  escalation matrix below must respect this projection to avoid spurious
+  escalations every sweep on NEUTRAL-prior tickers.
 - `PRICE` — the dollar value on the `Price:` line.
 - `COMPANY` — the name on the header line (after the ticker, before the
   date).
@@ -219,7 +229,19 @@ python3 ~/.claude/skills/trade/scripts/trade_memory.py \
 |---------------------|------------------|----------|
 | null (first quick) | any | keep quick, no escalation (recommend-tier already decided quick) |
 | same as prior | same | keep quick |
-| any | different | **ESCALATE** — proceed to Step 3c |
+| **HOLD** | **HOLD** (or any quick-emitted HOLD covering a prior NEUTRAL) | keep quick — HOLD covers both HOLD and NEUTRAL bands per the projection table above |
+| **NEUTRAL** | **HOLD** | keep quick — HOLD is the quick-equivalent of NEUTRAL (40–54 band) |
+| **STRONG BUY** | **BUY** | keep quick — BUY covers both STRONG BUY and BUY bands |
+| any | otherwise different | **ESCALATE** — proceed to Step 3c |
+
+The "covers" rules above prevent a guaranteed escalation loop for tickers
+whose last full analysis landed in the NEUTRAL (40–54) or STRONG BUY (85+)
+bands — `/trade quick` cannot produce those exact labels (it only emits 4),
+so a naïve string equality would flip every sweep. Treating HOLD as
+covering {HOLD, NEUTRAL} and BUY as covering {STRONG BUY, BUY} aligns the
+4-label quick output with the 6-label Signal enum for change-detection
+purposes. A genuine band shift (e.g., HOLD prior → BUY new) still escalates
+correctly.
 
 ### Step 3c — Escalation (signal change detected in a quick)
 

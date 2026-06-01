@@ -1,7 +1,7 @@
 #!/bin/bash
 # ============================================================================
 # AI Trading Analyst — Claude Code Skills Installer
-# 16 Skills · 5 Agents · Options · PDF Reports · Stock Screening
+# 18 Skills · 5 Agents · Options · PDF Reports · Stock Screening
 # ============================================================================
 set -e
 

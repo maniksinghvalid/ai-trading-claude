@@ -557,7 +557,11 @@ or surface as an error to the user — the report file on disk is the
 authoritative output. Run via Bash:
 
 ```bash
-RUN_ID="routine-$(date -u +%Y%m%d-%H%M)-$(openssl rand -hex 3)"
+# RUN_ID: prefer the routine's sweep-level ID (TRADE_RUN_ID env var) so all
+# records from one /trade routine pass share a run_id. Standalone /trade
+# analyze invocations generate their own. The 6-hex tail uses openssl when
+# available, /dev/urandom otherwise (some minimal containers lack openssl).
+RUN_ID="${TRADE_RUN_ID:-routine-$(date -u +%Y%m%d-%H%M)-$( (openssl rand -hex 3 2>/dev/null) || (head -c 24 /dev/urandom | xxd -p | head -c 6) )}"
 python3 ~/.claude/skills/trade/scripts/trade_memory.py \
     ingest TRADE-ANALYSIS-<TICKER>.md \
     --archive \
@@ -566,9 +570,13 @@ python3 ~/.claude/skills/trade/scripts/trade_memory.py \
 ```
 
 The `|| true` is critical — it converts any non-zero exit into a no-op so the
-skill continues to Step 5. Generation of `RUN_ID` here groups records from
-a single sweep when the routine is the caller (the routine overrides this
-with its own sweep-level RUN_ID via the env or a passed arg).
+skill continues to Step 5. The `${TRADE_RUN_ID:-...}` pattern is what makes
+the routine's "query records by run_id" contract work: when
+`/trade routine` dispatches this skill, it pre-sets `TRADE_RUN_ID` in the
+environment and this fallback honors it; standalone invocations generate
+their own ID using the `routine-` prefix (intentional — the prefix is
+harmless for ad-hoc analyses and keeps the ID grammar uniform across all
+records).
 
 `--archive` requests a Drive mirror; if `TRADE_DRIVE_ARCHIVE_FOLDER_ID` is
 unset, the ingest emits a one-line setup hint on stderr and the Pinecone
