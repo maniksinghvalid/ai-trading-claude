@@ -89,6 +89,37 @@ In the Vercel project settings → Environment Variables, set:
 
 After setting env vars, redeploy with `vercel --prod` so they take effect.
 
+### Deployment Protection — two options
+
+Vercel projects default to having "Deployment Protection" (SSO gate) on,
+which blocks every request before it reaches our function — including
+routine traffic with valid `PROXY_AUTH_TOKEN`. Pick one:
+
+**Option A: Disable Deployment Protection** (simplest)
+
+Project Settings → **Deployment Protection** → set Vercel Authentication
+to **Disabled**. Our own bearer + payload validation + namespace
+allowlist handle the gating job. The deploy URL is already
+high-entropy enough that enumeration isn't a credible threat.
+
+**Option B: Keep DP on, add Protection Bypass for Automation**
+
+1. Project Settings → **Deployment Protection** → "Protection Bypass for
+   Automation" → **Add new** → copy the generated token (Vercel calls
+   this a "bypass secret")
+2. On the producer side (and in any cloud routine prompt), set
+   `VERCEL_PROTECTION_BYPASS=<the-bypass-secret>` alongside
+   `PINECONE_PROXY_URL` and `PINECONE_PROXY_TOKEN`
+3. `trade_memory.py` (slice 7.5+) attaches the
+   `x-vercel-protection-bypass: <token>` header to every proxy request
+   when the env var is set; without that header, Vercel SSO would
+   intercept
+
+Trade-off: two tokens to rotate (bypass + bearer); more
+defense-in-depth, more surface to manage. For research-tool-grade use,
+Option A is fine; for "I want to keep the dashboard SSO-protected
+even though the API is public", Option B is the answer.
+
 ### Sanity-check the deploy
 
 ```bash

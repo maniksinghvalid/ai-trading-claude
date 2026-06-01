@@ -232,20 +232,36 @@ class VectorStore:
         on any other status with the status code + response body attached
         so callers can branch (e.g. doctor's auth check expects 400, not
         200).
+
+        If ``VERCEL_PROTECTION_BYPASS`` is set (the user kept Vercel
+        Deployment Protection on and generated a Protection Bypass for
+        Automation token), the corresponding header is attached so the
+        request reaches the function instead of the Vercel SSO gate.
+        Both header AND query-param forms are accepted by Vercel; the
+        header is cleaner — no need to fold into the URL.
         """
         import json as _json
         import urllib.request
         import urllib.error
         url = self.proxy_url.rstrip("/") + "/" + op
         body = _json.dumps(payload).encode("utf-8")
+        headers = {
+            "Authorization": f"Bearer {self.proxy_token}",
+            "Content-Type": "application/json",
+            "User-Agent": "trade-memory.py/slice7.5",
+        }
+        bypass = os.environ.get("VERCEL_PROTECTION_BYPASS")
+        if bypass:
+            headers["x-vercel-protection-bypass"] = bypass
+            # Vercel docs recommend also setting this so the bypass
+            # cookie isn't set on the response (we don't want it stuck
+            # to a long-lived client). "samesitenoneblob" is opaque to
+            # callers and just instructs Vercel not to set the cookie.
+            headers["x-vercel-set-bypass-cookie"] = "false"
         req = urllib.request.Request(
             url,
             data=body,
-            headers={
-                "Authorization": f"Bearer {self.proxy_token}",
-                "Content-Type": "application/json",
-                "User-Agent": "trade-memory.py/slice7.5",
-            },
+            headers=headers,
             method="POST",
         )
         try:
