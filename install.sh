@@ -17,7 +17,7 @@ echo ""
 echo -e "${BLUE}╔══════════════════════════════════════════════════════════════╗${NC}"
 echo -e "${BLUE}║                                                              ║${NC}"
 echo -e "${BLUE}║${NC}   ${CYAN}AI Trading Analyst — Claude Code Skills${NC}                   ${BLUE}║${NC}"
-echo -e "${BLUE}║${NC}   ${GREEN}17 Skills · 5 Agents · Options · PDF Reports${NC}              ${BLUE}║${NC}"
+echo -e "${BLUE}║${NC}   ${GREEN}18 Skills · 5 Agents · Options · PDF Reports${NC}              ${BLUE}║${NC}"
 echo -e "${BLUE}║                                                              ║${NC}"
 echo -e "${BLUE}╚══════════════════════════════════════════════════════════════╝${NC}"
 echo ""
@@ -95,7 +95,7 @@ if [ -f "$SOURCE_DIR/trade/SKILL.md" ]; then
 fi
 
 # ---------------------------------------------------------------------------
-# Install 16 sub-skills
+# Install 17 sub-skills
 # ---------------------------------------------------------------------------
 SKILLS=(
     trade-analyze
@@ -108,6 +108,7 @@ SKILLS=(
     trade-options
     trade-portfolio
     trade-holdings
+    trade-routine
     trade-risk
     trade-screen
     trade-earnings
@@ -228,6 +229,7 @@ echo -e "  ${CYAN}/trade thesis <ticker>${NC}       Investment thesis with entry
 echo -e "  ${CYAN}/trade options <ticker>${NC}      Options strategy recommendations"
 echo -e "  ${CYAN}/trade portfolio${NC}             Portfolio analysis & rebalancing"
 echo -e "  ${CYAN}/trade holdings${NC}              Read holdings from Google Drive (InvestmentSummary folder)"
+echo -e "  ${CYAN}/trade routine${NC}               Tiered daily sweep over the portfolio (analyze + quick + escalation)"
 echo -e "  ${CYAN}/trade risk <ticker>${NC}         Risk assessment & position sizing"
 echo -e "  ${CYAN}/trade screen <criteria>${NC}     Stock screener by strategy"
 echo -e "  ${CYAN}/trade earnings <ticker>${NC}     Pre-earnings analysis"
