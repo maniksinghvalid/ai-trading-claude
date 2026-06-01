@@ -82,9 +82,43 @@ After collecting all data, build the thesis using the following structure. Every
 
 ## Output Format
 
-Generate a file named `TRADE-THESIS-<TICKER>.md` with the following structure:
+Generate a file named `TRADE-THESIS-<TICKER>.md` with the following structure.
+
+The file MUST begin with a YAML frontmatter block so `trade_memory.py ingest`
+can index the report into the Pinecone memory layer. Per the §2 availability
+table in `plan/portfolio-routine-and-vector-memory.md`, THESIS emits
+`thesis_score`, `signal` (thesis-derived), `grade`, `price_at_analysis`,
+`price_target`, `stop_loss`, `catalysts`, `nearest_catalyst_date` (no
+`composite_score` or per-dim scores). Signal and grade are **UPPERCASE** and
+derived from `thesis_score` via the shared 6-band table
+(`scripts/trade_scoring.py`: 85+/A+/STRONG BUY · 70-84/A/BUY · 55-69/B/HOLD ·
+40-54/C/NEUTRAL · 25-39/D/CAUTION · 0-24/F/AVOID). Use the exact enum values
+(STRONG BUY|BUY|HOLD|NEUTRAL|CAUTION|AVOID and A+|A|B|C|D|F).
+
+Map `thesis_score` from the section-9 weighted total (×10 so a 7.4/10 becomes
+74/100). Map `price_target` from Target 1 in the Exit Strategy table;
+`stop_loss` from the Initial Stop Loss. Build `catalysts` from the Catalyst
+Timeline section (one entry per row, formatted "<event> <date>"); set
+`nearest_catalyst_date` to the earliest catalyst date in YYYY-MM-DD form.
 
 ```markdown
+---
+trade_report: true
+schema_version: 1
+ticker: <TICKER>
+company: <COMPANY NAME>
+report_type: THESIS
+generated_at: <ISO-8601 timestamp with tz, e.g. 2026-06-01T14:30:00-07:00>
+thesis_score: <int 0-100, from §9 weighted total ×10>
+signal: <STRONG BUY|BUY|HOLD|NEUTRAL|CAUTION|AVOID>   # derived from thesis_score
+grade: <A+|A|B|C|D|F>                                   # derived from thesis_score
+price_at_analysis: <float, USD>
+price_target: <float, USD — Target 1 from Exit Strategy>
+stop_loss: <float, USD — Initial Stop Loss from Exit Strategy>
+catalysts: ["<event> <date>", "<event> <date>"]
+nearest_catalyst_date: <YYYY-MM-DD — earliest catalyst>
+---
+
 # Investment Thesis: <TICKER> — <COMPANY NAME>
 
 **Generated:** <current date and time>

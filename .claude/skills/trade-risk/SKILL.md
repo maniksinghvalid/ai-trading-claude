@@ -98,9 +98,39 @@ Calculate a composite Risk Score from 0-100 where **higher = SAFER** (less risky
 
 ## Output Format
 
-Generate a file named `TRADE-RISK-<TICKER>.md` with the following structure:
+Generate a file named `TRADE-RISK-<TICKER>.md` with the following structure.
+
+The file MUST begin with a YAML frontmatter block so `trade_memory.py ingest`
+can index the report into the Pinecone memory layer. Populate only the fields
+this skill computes — per the §2 availability table in
+`plan/portfolio-routine-and-vector-memory.md`, RISK emits `risk_score`,
+`signal`, `grade`, `price_at_analysis`, `price_target`, `stop_loss`.
+**`risk_score` is INVERTED — higher means LOWER risk** (so it composes
+correctly into the weighted Trade Score; preserve this convention).
+Signal and grade are **UPPERCASE** and derived from `risk_score` via the
+shared 6-band table (`scripts/trade_scoring.py`: 85+/A+/STRONG BUY ·
+70-84/A/BUY · 55-69/B/HOLD · 40-54/C/NEUTRAL · 25-39/D/CAUTION · 0-24/F/AVOID).
+Use the exact enum values (STRONG BUY|BUY|HOLD|NEUTRAL|CAUTION|AVOID and
+A+|A|B|C|D|F). Map `price_target` from "Best Entry for Risk/Reward" or the
+nearest meaningful Resistance 1 level; `stop_loss` from the 2x ATR stop in
+the Volatility-Based Stop Loss Levels table.
 
 ```markdown
+---
+trade_report: true
+schema_version: 1
+ticker: <TICKER>
+company: <COMPANY NAME>
+report_type: RISK
+generated_at: <ISO-8601 timestamp with tz, e.g. 2026-06-01T14:30:00-07:00>
+risk_score: <int 0-100, INVERTED — higher = safer>
+signal: <STRONG BUY|BUY|HOLD|NEUTRAL|CAUTION|AVOID>   # derived from risk_score
+grade: <A+|A|B|C|D|F>                                   # derived from risk_score
+price_at_analysis: <float, USD>
+price_target: <float, USD — typically Resistance 1 or "best R/R" entry target>
+stop_loss: <float, USD — 2x ATR stop from the volatility-stop table>
+---
+
 # Risk Assessment: <TICKER> — <COMPANY NAME>
 
 **Generated:** <current date and time>

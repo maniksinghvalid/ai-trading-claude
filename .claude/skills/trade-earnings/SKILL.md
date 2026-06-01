@@ -200,9 +200,29 @@ Explain the conviction rating:
 
 Write the complete analysis to **TRADE-EARNINGS-[TICKER].md** in the current working directory.
 
+The file MUST begin with a YAML frontmatter block so `trade_memory.py ingest`
+can index the report into the Pinecone memory layer. Per the §2 availability
+table in `plan/portfolio-routine-and-vector-memory.md`, EARNINGS emits
+`price_at_analysis`, `catalysts`, `nearest_catalyst_date` **only** — NO
+`signal`, NO `grade`, NO scores (pre-earnings is informational, not a
+directional recommendation). `nearest_catalyst_date` is the upcoming earnings
+date itself; `catalysts` is a single-item list naming the earnings event.
+
 ### Output Structure
 
 ```markdown
+---
+trade_report: true
+schema_version: 1
+ticker: [TICKER]
+company: [Company Name]
+report_type: EARNINGS
+generated_at: <ISO-8601 timestamp with tz, e.g. 2026-06-01T14:30:00-07:00>
+price_at_analysis: <float, USD — current stock price>
+catalysts: ["Earnings <YYYY-MM-DD>"]
+nearest_catalyst_date: <YYYY-MM-DD — the earnings date>
+---
+
 # Pre-Earnings Analysis: [TICKER] — [Company Name]
 
 **Generated:** [DATE] | **Earnings Date:** [DATE] [BMO/AMC] | **Days Until:** [X]
