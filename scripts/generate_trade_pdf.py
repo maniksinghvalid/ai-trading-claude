@@ -63,34 +63,22 @@ def score_color(score):
         return COLORS["red"]
 
 
-def score_grade(score):
-    """Return trade grade from score."""
-    if score >= 85:
-        return "A+"
-    elif score >= 70:
-        return "A"
-    elif score >= 55:
-        return "B"
-    elif score >= 40:
-        return "C"
-    elif score >= 25:
-        return "D"
-    else:
-        return "F"
+# score_grade() and trade_signal() are imported from the sibling trade_scoring.py
+# module so this script and `scripts/trade_memory.py` (slice 3a) share a single
+# source of truth for the 6-band table. Using importlib.util by absolute file
+# location avoids assumptions about sys.path or CWD — works whether the script
+# runs from the repo root (`python3 scripts/generate_trade_pdf.py ...`) or from
+# `~/.claude/skills/trade/scripts/` after install. See
+# `plan/portfolio-routine-and-vector-memory.md` §"import resolution".
+import importlib.util
+import pathlib
 
-
-def trade_signal(score):
-    """Return trade signal from score."""
-    if score >= 85:
-        return "STRONG BUY"
-    elif score >= 70:
-        return "BUY"
-    elif score >= 55:
-        return "HOLD"
-    elif score >= 40:
-        return "CAUTION"
-    else:
-        return "AVOID"
+_here = pathlib.Path(__file__).resolve().parent
+_spec = importlib.util.spec_from_file_location("trade_scoring", _here / "trade_scoring.py")
+_trade_scoring = importlib.util.module_from_spec(_spec)
+_spec.loader.exec_module(_trade_scoring)
+score_grade = _trade_scoring.score_grade
+trade_signal = _trade_scoring.trade_signal
 
 
 def signal_color(score):

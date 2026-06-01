@@ -147,6 +147,15 @@ Overall confidence in the thesis after considering all factors.
 
 ### Step 5: Determine Recommended Action
 
+> **Per-dimension table (slice 1 cleanup, do not "align" to composite).** This is the
+> **per-dimension thesis action** — NOT the composite 6-band trade signal. The band
+> boundaries (80/65/50/35/0) and action labels are thesis-specific. The 0-34 row says
+> "Avoid — potential short candidate" which uses the word "Avoid" but is a per-dimension
+> thesis call, not the composite AVOID signal. The canonical composite 6-band table
+> (85/70/55/40/25/0 → STRONG BUY/BUY/HOLD/NEUTRAL/CAUTION/AVOID) lives in
+> `trade/SKILL.md:57-64` and `scripts/trade_scoring.py`. This thesis-only table feeds
+> the composite synthesis in `skills/trade-analyze/SKILL.md`.
+
 | Score | Action |
 |-------|--------|
 | 80-100 | Strong conviction — initiate position (full size) |

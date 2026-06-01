@@ -124,6 +124,16 @@ For each risk:
 
 ### Step 5: Determine Signal
 
+> **Per-dimension table (slice 1 cleanup, do not "align" to composite).** This is the
+> **per-dimension risk signal** — NOT the composite 6-band trade signal. The band
+> boundaries (80/65/50/35/0) and labels ("Low Risk" / "Moderate Risk" / "Elevated Risk"
+> / "High Risk" / "Extreme Risk") are risk-specific. Also note that `risk_score` is
+> **INVERTED** (higher = safer) so it composes correctly into the weighted composite per
+> `CLAUDE.md` cross-file contracts. The canonical composite 6-band table (85/70/55/40/25/0
+> → STRONG BUY/BUY/HOLD/NEUTRAL/CAUTION/AVOID) lives in `trade/SKILL.md:57-64` and
+> `scripts/trade_scoring.py`. This risk-only table feeds the composite synthesis in
+> `skills/trade-analyze/SKILL.md`.
+
 | Score | Signal |
 |-------|--------|
 | 80-100 | Low Risk — favorable risk profile for position entry |

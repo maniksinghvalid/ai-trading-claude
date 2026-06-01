@@ -36,7 +36,7 @@ That's it. One command installs all 16 skills, 5 agents, and the PDF generation 
 
 AI Trading Analyst is a **research and analysis tool** built as Claude Code skills. It is **not** a trading bot. It does **not** connect to brokerages. It does **not** execute trades.
 
-What it does: takes a ticker symbol and runs a comprehensive multi-dimensional analysis using 5 parallel AI agents — technical, fundamental, sentiment, risk, and thesis — then produces a composite Trade Score (0-100) with a clear signal (Strong Buy / Buy / Hold / Caution / Avoid).
+What it does: takes a ticker symbol and runs a comprehensive multi-dimensional analysis using 5 parallel AI agents — technical, fundamental, sentiment, risk, and thesis — then produces a composite Trade Score (0-100) with a clear signal (Strong Buy / Buy / Hold / Neutral / Caution / Avoid).
 
 Run `/trade analyze AAPL` and 5 AI agents launch in parallel to produce a complete investment research report.
 
@@ -138,7 +138,7 @@ The **Trade Score** (0-100) is a weighted composite of 5 dimensions:
 | 85-100 | A+ | Strong Buy | High conviction across all dimensions |
 | 70-84 | A | Buy | Favorable setup with manageable risks |
 | 55-69 | B | Hold | Mixed signals, wait for confirmation |
-| 40-54 | C | Caution | No clear edge, stay on sidelines |
+| 40-54 | C | Neutral | No clear edge, stay on sidelines |
 | 25-39 | D | Caution | Significant headwinds or overvaluation |
 | 0-24 | F | Avoid | Major red flags across multiple dimensions |
 

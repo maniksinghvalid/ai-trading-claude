@@ -126,7 +126,15 @@ Search queries:
 
 ### Step 4: Determine Signal
 
-Based on the composite sentiment score:
+> **Per-dimension table (slice 1 cleanup, do not "align" to composite).** This is the
+> **per-dimension sentiment signal** — NOT the composite 6-band trade signal. The band
+> boundaries (80/65/50/35/0) and labels ("Strong Positive" / "Positive" / "Neutral" /
+> "Negative" / "Strong Negative") are sentiment-specific and intentionally distinct from
+> the canonical composite 6-band table (85/70/55/40/25/0 → STRONG BUY/BUY/HOLD/NEUTRAL/
+> CAUTION/AVOID) in `trade/SKILL.md:57-64` and `scripts/trade_scoring.py`. This
+> sentiment-only table feeds the composite synthesis in `skills/trade-analyze/SKILL.md`.
+
+Based on the composite sentiment score (within this dimension):
 
 | Score | Signal |
 |-------|--------|
