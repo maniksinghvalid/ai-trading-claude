@@ -252,21 +252,45 @@ folder IS the archive root. Ticker subfolders are created lazily by
 caller acts on; the same `canAddChildren` limitation will apply if the MCP
 scope is read-only).
 
-### 3. Slack DM channel discovery
+### 3. Slack channel verification
 
-Offer to look up the user's Slack DM channel ID so they can pipe routine
-digests there. The email in MEMORY.md (`manik.singh.valid@gmail.com`) is
-the search key.
+The cloud routine (slice 8) defaults to posting digests to
+**`#portfolio-updates`** (channel ID **`C0B712ARA7M`**) — hardcoded in
+`skills/trade-routine/SKILL.md` the same way the InvestmentSummary Drive
+folder ID is hardcoded above. Verify the channel exists in the user's
+workspace so the first `/trade routine --cloud` doesn't silently warn.
 
 If the Slack MCP is connected, run:
+```
+mcp__claude_ai_Slack__slack_search_channels
+  query: portfolio_updates    # Slack normalizes underscore → hyphen
+```
+Expect exactly one match with name `#portfolio-updates` and id
+`C0B712ARA7M`. Tell the user "✓ Slack channel `#portfolio-updates`
+verified" if so.
+
+If no match (different workspace, channel renamed, channel deleted),
+print:
+```
+[setup] #portfolio-updates not found in this Slack workspace.
+        Options:
+          (a) Create a `#portfolio-updates` channel in this workspace,
+              then update the hardcoded ID in
+              skills/trade-routine/SKILL.md (P0 flag parsing block).
+          (b) Pass `--slack-channel <your-channel-id>` per-routine to
+              override the default for that invocation.
+```
+
+**Personal-DM alternative (footnote):** if the user prefers digests in a
+personal DM rather than the team channel, they can look up their own
+DM channel ID with:
 ```
 mcp__claude_ai_Slack__slack_search_users
   query: manik.singh.valid@gmail.com  (or just "Manik")
 ```
-Find the user, then explain that the DM channel ID is what they'll paste
-into `/trade routine --slack-channel <id>` (or the cloud routine prompt).
-The exact channel-ID format depends on the Slack workspace — a typical DM
-ID looks like `D01ABC234DE`.
+and pass the resulting DM ID (typically `D01...`) via
+`--slack-channel <id>` on each routine invocation. This is opt-in; the
+hardcoded channel is the default.
 
 If the Slack MCP isn't connected, print a one-liner explaining how to
 connect it later.

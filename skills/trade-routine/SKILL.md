@@ -30,9 +30,14 @@ Activates on:
 - `/trade routine` — default daily sweep
 - `/trade routine --max-escalations N` — override the analyze-cap
   (default 10; raise for portfolios > 30 tickers)
-- `/trade routine --cloud --slack-channel <id>` — **slice 8 only;
-  print "cloud mode not yet implemented (slice 8 deliverable); falling
-  back to local mode" and continue. Do NOT silently drop the flag.**
+- `/trade routine --cloud` — **slice 8 only;** posts the digest to
+  `#portfolio-updates` (channel ID `C0B712ARA7M`) by default via
+  `slack_send_message`. While slice 8 isn't wired yet, print
+  "cloud mode not yet implemented (slice 8 deliverable); falling
+  back to local mode" and continue. Do NOT silently drop the flag.
+- `/trade routine --cloud --slack-channel <id>` — optional override of
+  the default destination (e.g., a test channel or a personal DM
+  channel ID). Same slice-8 "not yet implemented" notice applies.
 
 ---
 
@@ -42,7 +47,9 @@ Activates on:
 
 Parse the command line for:
 - `--max-escalations N` → set `MAX_ESCALATIONS` (default 10)
-- `--slack-channel <id>` → capture but ignore (slice 8)
+- `--slack-channel <id>` → set `SLACK_CHANNEL_ID`; **default
+  `C0B712ARA7M` (`#portfolio-updates`)**. Capture but ignore for slice 6
+  (slice 8 wires the actual `slack_send_message` call).
 - `--cloud` → capture; print the slice-8 notice; continue local
 
 ### P1 — Generate `run_id`
@@ -371,10 +378,18 @@ For slice 6:
   ```
 
 For slice 8 (not yet wired):
-- `--cloud` will add Slack DM + Drive digest upload
-- `--slack-channel` will route the digest to a specific channel
+- `--cloud` will add Slack channel post (`#portfolio-updates`, channel ID
+  `C0B712ARA7M` — hardcoded default per the plan-doc §4) + Drive digest
+  upload. Delivery via `slack_send_message`; long digests escalate to
+  `slack_create_canvas`.
+- `--slack-channel <id>` overrides the default channel for one routine
+  (test channel, personal DM, etc.).
+- Different-user note: if your Slack workspace doesn't contain
+  `C0B712ARA7M`, either create a `#portfolio-updates` channel in your
+  workspace and update the hardcoded ID here, or pass `--slack-channel
+  <id>` per-routine.
 - This skill prints "cloud mode not yet implemented (slice 8); falling
-  back to local mode" when those flags are passed
+  back to local mode" when those flags are passed.
 
 ---
 

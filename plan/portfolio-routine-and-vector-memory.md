@@ -58,8 +58,10 @@ Changes from the prior revision:
 7. **Escalation decision matrix made explicit.** Plan now defines exactly what "quick signal
    differs from stored signal" means, including the null-prior case and what happens to the
    already-written quick file.
-8. **First-run flows added** for `TRADE_DRIVE_ARCHIVE_FOLDER_ID` (via `doctor` and `ingest`)
-   and for `--slack-channel <id>` (via `slack_search_users`).
+8. **First-run flows added** for `TRADE_DRIVE_ARCHIVE_FOLDER_ID` (via `doctor` and
+   `ingest`). The Slack channel for cloud routine digests is hardcoded to
+   `#portfolio-updates` (id `C0B712ARA7M`) — no setup-time `slack_search_users` flow
+   needed; `--slack-channel <id>` exists only as an optional override.
 9. **`trade-portfolio` ↔ `trade-holdings` overlap addressed.** Slice 5 also updates
    `trade-portfolio` to try Drive first, fall back to interactive paste — no silent failure.
 10. **Drive subfolder creation, `rebuild` from Drive folder, quick frontmatter subset**
@@ -143,7 +145,7 @@ Google Drive ──────────────────► /trade ro
 
                   Routine digest TRADE-ROUTINE-<ts>.md
                   ├─ local: stdout + CWD file
-                  └─ cloud: stdout + CWD file + Slack DM + Drive upload
+                  └─ cloud: stdout + CWD file + Slack post (#portfolio-updates) + Drive upload
 
 /trade recall "<q>" [ticker]  ──► trade_memory.py query  ──► Pinecone search
 /trade thesis <T>             ──► Step 0 reads memory before fresh research
@@ -164,13 +166,15 @@ Three execution surfaces. They use the same skills and the same CLI; only output
 
 | Surface | Trigger | Holdings source | Digest output | Report archive |
 |---------|---------|-----------------|---------------|----------------|
-| **Cloud routine** (reference) | `/schedule` cron | Drive MCP (attached connector) | Slack DM + Drive upload + CWD file | Drive archive (Drive MCP) + Pinecone |
+| **Cloud routine** (reference) | `/schedule` cron | Drive MCP (attached connector) | Slack channel post (#portfolio-updates default, id `C0B712ARA7M`) + Drive upload + CWD file | Drive archive (Drive MCP) + Pinecone |
 | **Local interactive** | user runs `/trade routine` | Drive MCP → fallback `TRADE-HOLDINGS.md` | stdout + CWD file | Drive archive (Drive MCP) + Pinecone |
 | **Local cron** (legacy) | macOS `cron` running `claude -p` | Drive MCP → fallback `TRADE-HOLDINGS.md` | CWD file | Drive archive + Pinecone |
 
-The routine's behavior split is driven by one flag the prompt sets: `--cloud`. The routine
-skill prompt for a cloud routine reads `/trade routine --cloud --slack-channel <id>`;
-locally a user types `/trade routine`. The skill prose handles both — no separate skill.
+The routine's behavior split is driven by one flag the prompt sets: `--cloud`. The
+routine skill prompt for a cloud routine reads `/trade routine --cloud` (digest posts to
+`#portfolio-updates` by default); locally a user types `/trade routine`. Pass
+`--slack-channel <id>` explicitly only when you need to override the default destination
+(e.g., a test channel or a personal DM). The skill prose handles both — no separate skill.
 
 ---
 
@@ -653,26 +657,30 @@ no drift at any commit.
 
 ## 4. Output routing for `/trade routine`
 
-The routine prompt accepts `--cloud` and `--slack-channel <id>` flags. Behavior:
+The routine prompt accepts `--cloud` and an optional `--slack-channel <id>` override.
+Behavior:
 
 | Output | Local | Local + Slack | Cloud routine |
 |--------|-------|----------------|---------------|
 | stdout | always | always | always (visible in routine logs) |
 | `TRADE-ROUTINE-<ts>.md` in CWD | always | always | always (ephemeral in cloud, but visible in logs) |
-| Slack DM with digest | only if `--slack-channel` given | yes | yes (channel from routine prompt) |
+| Slack channel post (`#portfolio-updates`) with digest | only if `--slack-channel` given | yes | yes (default channel `C0B712ARA7M`; override via `--slack-channel <id>`) |
 | Drive upload of digest | only if `TRADE_DRIVE_ARCHIVE_FOLDER_ID` set | yes | yes |
 | Per-ticker report Drive archive | yes (via `ingest --archive`) | yes | yes |
 
-In cloud mode, the digest message to Slack is posted via `slack_send_message` (or
-`slack_create_canvas` for longer digests). Failure to deliver to Slack is a warning, not an
-error; Drive upload is the durability backstop.
+In cloud mode, the digest is posted via `slack_send_message` to channel ID
+`C0B712ARA7M` (`#portfolio-updates`) by default; pass `--slack-channel <id>` to override
+(e.g., a test channel or a personal DM). For long digests, `slack_create_canvas` is the
+documented escalation path. Failure to deliver to Slack is a warning, not an error;
+Drive upload is the durability backstop.
 
-**Slack channel discovery (one-time setup for cloud routines):** the user runs `/trade
-setup` (folded into slice 5's `/trade holdings` workflow): the skill calls
-`slack_search_users` with the user's email (already in MEMORY.md), gets the user ID, opens
-a DM with `slack_get_thread` or the equivalent IM API, and prints the channel ID. The user
-pastes it into the routine prompt when creating the cloud routine. No persisted config —
-the channel ID is hardcoded into the routine prompt at schedule-creation time.
+**Different-user note:** if someone forks this repo into a Slack workspace that doesn't
+contain `C0B712ARA7M`, Slack delivery will fail (logged as a warning, not an error). The
+operator should either create a `#portfolio-updates` channel in their own workspace and
+update the hardcoded ID in `skills/trade-routine/SKILL.md` (same pattern slice 5 uses for
+the InvestmentSummary Drive folder ID), or pass `--slack-channel <id>` per-routine.
+Slack also normalizes the channel name `portfolio_updates` → `portfolio-updates`
+(underscore → hyphen) — the ID is the authoritative identifier across renames.
 
 ## 5. New skills
 
@@ -688,8 +696,12 @@ Docs natively) → normalize to a clean uppercase ticker list (strip shares/$/na
 - Also offer to create the report archive folder (`AI Trading/Reports/`) and print the
   resulting folder ID with a one-liner: `export
   TRADE_DRIVE_ARCHIVE_FOLDER_ID=<id>`.
-- Also offer to look up the Slack DM channel ID via `slack_search_users` (using the email
-  from MEMORY.md) and print it for the user to use in a future `/schedule` call.
+- Also confirm the default cloud-routine Slack channel `#portfolio-updates`
+  (id `C0B712ARA7M`) exists in this workspace via `slack_search_channels`. If missing,
+  print a one-liner: "create a `#portfolio-updates` channel in this workspace OR pass
+  `--slack-channel <id>` per-routine when scheduling." (A `slack_search_users`-based DM
+  is still available as an opt-in alternative for users who want digests in a personal
+  DM — pass that DM's channel ID via `--slack-channel <id>`.)
 
 **Output:**
 - Print normalized list.
@@ -701,6 +713,11 @@ Docs natively) → normalize to a clean uppercase ticker list (strip shares/$/na
 only on Drive failure.
 
 ### `/trade routine [--cloud] [--slack-channel <id>] [--max-escalations N]`
+
+`--slack-channel <id>` is **optional**; when omitted (the common case for both cloud and
+local-with-Slack invocations) the digest posts to the hardcoded default
+`C0B712ARA7M` (`#portfolio-updates`). Pass the flag only to override that destination
+for one routine — e.g., a side channel for testing, or a personal DM channel ID.
 
 **Escalation cap (`--max-escalations N`, default 10).** To protect against subagent-dispatch
 exhaustion on volatile-market days, the routine tracks a per-run counter of `/trade analyze`
@@ -955,8 +972,9 @@ Builds `proxy/` per the directory layout in §"Cloud path: Vercel HTTPS proxy".
    ops; `doctor` reports proxy mode active and the auth check passes.
 
 ### Slice 8 — Cloud routine deployment (2–3 days, after CFG verifications pass)
-Add the `--cloud` flag wiring + Slack DM delivery + Drive archive upload. The cloud
-routine prompt template now exports two env vars before invoking the routine:
+Add the `--cloud` flag wiring + Slack channel delivery (default `#portfolio-updates`,
+channel ID `C0B712ARA7M`; `--slack-channel <id>` overrides) + Drive archive upload. The
+cloud routine prompt template now exports two env vars before invoking the routine:
 
 ```bash
 export PINECONE_PROXY_URL="https://<deployed-subdomain>.vercel.app"
@@ -971,9 +989,12 @@ auth model is research-tool-grade, not production-grade" callout and the rotatio
 procedure. Document the verification routines (CFG-1/2/3/4) so the user can re-run them
 on Anthropic platform changes.
 
-**Gate:** create a one-shot cloud routine via `/schedule` that runs `/trade routine --cloud
---slack-channel <id>` against a 2-ticker holdings list; routine completes; Pinecone shows
-new records; Slack receives the digest; Drive folder shows uploaded files.
+**Gate:** create a one-shot cloud routine via `/schedule` that runs `/trade routine
+--cloud` against a 2-ticker holdings list; routine completes; Pinecone shows new
+records; `#portfolio-updates` (channel ID `C0B712ARA7M`) receives the digest message;
+Drive folder shows uploaded files. The `--slack-channel <id>` override flag is exercised
+in a side test: same invocation with `--slack-channel <test-channel-id>` posts to the
+override channel instead of `#portfolio-updates`.
 
 ### Slice 9 — Docs + install polish (1 day)
 `CLAUDE.md`; `README.md` (counts 16→19, structure tree, Pinecone setup, cloud caveat, cost
@@ -1070,9 +1091,11 @@ standalone CLIs.
 1. CFG-1: secret-injection verification routine completes; `PINECONE_API_KEY` length non-zero.
 2. CFG-2: WebSearch + WebFetch routine completes; example.com fetch succeeds.
 3. CFG-3: subagent dispatch routine completes; trivial subagent returns.
-4. Real one-shot routine: `/trade routine --cloud --slack-channel <id>` against a 2-ticker
-   holdings list → routine completes; Pinecone has new records; Slack receives the digest;
-   Drive folder has uploaded files.
+4. Real one-shot routine: `/trade routine --cloud` against a 2-ticker holdings list →
+   routine completes; Pinecone has new records; `#portfolio-updates` (channel ID
+   `C0B712ARA7M`) receives the digest; Drive folder has uploaded files. Optional
+   override check: same invocation with `--slack-channel <test-channel-id>` posts to the
+   override channel instead.
 5. Recurring routine: schedule the same prompt to run hourly for 4 hours; confirm 4 successful
    runs, no duplicate records, digest deltas reflect lack of price change.
 
