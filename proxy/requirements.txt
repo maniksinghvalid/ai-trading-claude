@@ -1,4 +1,9 @@
 # Vercel serverless-function dependencies for the AI Trading Analyst proxy.
-# Pinned to majors that match the local trade_memory.py contract (slice 3a).
-pinecone>=5
+# Pinned to MAJOR versions that match what trade_memory.py was tested against.
+# The local producer ships against pinecone 7.x; Pinecone has shipped major
+# rewrites in 8.x/9.x that change Index.search() / upsert_records() shapes
+# enough to break our payload contracts. The `>=5` we had before let Vercel
+# install pinecone 9.0.1, which silently broke /query + /upsert at runtime
+# (validate.py + auth still worked because they don't touch Pinecone).
+pinecone>=7.3,<8
 pydantic>=2
