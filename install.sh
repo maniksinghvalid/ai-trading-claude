@@ -28,7 +28,7 @@ echo ""
 # ---------------------------------------------------------------------------
 # Detect script directory (handle both local and curl | bash)
 # ---------------------------------------------------------------------------
-GITHUB_REPO="zubair-trabzada/ai-trading-claude"
+GITHUB_REPO="maniksinghvalid/ai-trading-claude"
 TEMP_DIR=""
 
 if [ -n "${BASH_SOURCE[0]}" ] && [ "${BASH_SOURCE[0]}" != "bash" ]; then
@@ -191,6 +191,28 @@ if python3 -c "import reportlab" 2>/dev/null; then
 else
     echo -e "  ${YELLOW}⚠${NC} reportlab not installed (needed for PDF reports)"
     echo -e "      Install with: ${CYAN}pip3 install reportlab${NC}"
+fi
+
+# Check pinecone + pydantic (vector memory — trade-routine, trade-recall, thesis Step 0)
+if python3 -c "import pinecone, pydantic" 2>/dev/null; then
+    echo -e "  ${GREEN}✓${NC} pinecone + pydantic installed"
+else
+    echo -e "  ${YELLOW}⚠${NC} pinecone / pydantic not installed (vector memory features will be disabled)"
+    echo -e "      Install with: ${CYAN}pip3 install 'pinecone>=7.3,<8' pydantic${NC}"
+    echo -e "      Affects: ${CYAN}/trade routine${NC}, ${CYAN}/trade recall${NC}, thesis Step 0 memory recall."
+    echo -e "      Without these, those features degrade gracefully (full-tier sweeps, 'memory unavailable' notes)."
+fi
+
+# Check Pinecone credentials (local SDK key OR cloud-proxy mode)
+if [ -n "${PINECONE_API_KEY:-}" ]; then
+    echo -e "  ${GREEN}✓${NC} PINECONE_API_KEY set (local SDK mode)"
+elif [ -n "${PINECONE_PROXY_URL:-}" ] && [ -n "${PINECONE_PROXY_TOKEN:-}" ]; then
+    echo -e "  ${GREEN}✓${NC} PINECONE_PROXY_URL + PINECONE_PROXY_TOKEN set (cloud-proxy mode)"
+else
+    echo -e "  ${YELLOW}⚠${NC} No Pinecone credentials in environment"
+    echo -e "      Set ${CYAN}PINECONE_API_KEY${NC} for local SDK mode, OR"
+    echo -e "      Set ${CYAN}PINECONE_PROXY_URL${NC} + ${CYAN}PINECONE_PROXY_TOKEN${NC} for cloud-proxy mode (Slice 7.5)."
+    echo -e "      See ${CYAN}README.md → Vector Memory (Pinecone)${NC} for setup."
 fi
 
 # ---------------------------------------------------------------------------
