@@ -2,9 +2,14 @@
 
 This file provides guidance to Claude Code (claude.ai/code) when working with code in this repository.
 
+## Session resumption — read first
+
+- **`state.md` in repo root**: a 50/75/90%-context checkpoint written by `~/.claude/hooks/state_md_checkpoint.py`. The bootstrap hook auto-loads it as a `<system-reminder>` at session start. **Read it before editing anything** — it carries the resume state (current slice, what just shipped, what's pending). If absent, no resume context; proceed normally.
+- **`plan/portfolio-routine-and-vector-memory.md`**: the active multi-slice plan (slices 1–9) driving most current work. Other files in `plan/` are supporting docs (preflight, CFG verification, Path-D formalization, chatbot spec).
+
 ## What this repository is
 
-This is the **source** for a Claude Code plugin — a suite of trading-research skills and subagents. Almost every file is a Markdown *prompt* (SKILL.md / agent definitions), not application code. The only executable is `scripts/generate_trade_pdf.py`.
+This is the **source** for a Claude Code plugin — a suite of trading-research skills and subagents. Most files are Markdown *prompts* (SKILL.md / agent definitions), not application code. Two executable surfaces exist: `scripts/generate_trade_pdf.py` (local PDF generator) and `proxy/` (a Vercel Python project — separate Vercel root dir — that fronts Pinecone for the memory skills; has its own `requirements.txt` and `vercel.json`, deploys on push to main).
 
 It is a research/analysis tool: given a ticker, it gathers public data via WebSearch/WebFetch and produces scored analysis. It does **not** connect to brokerages, use market-data APIs/keys, or execute trades. Every output must carry the educational/not-financial-advice disclaimer.
 
@@ -43,6 +48,7 @@ The 5 files in `agents/` are the subagent definitions for that fan-out. Note `sk
 - **Scoring weights are duplicated across files and must stay in sync.** Technical 25% / Fundamental 25% / Sentiment 20% / Risk 15% / Thesis 15%, and the composite formula, appear in `README.md`, `trade/SKILL.md`, `skills/trade-analyze/SKILL.md`, **and** the `**Weight:**` header of each `agents/*.md`. Change one → change all. The same applies to the score→grade→signal table (85+/A+/Strong Buy … 0-24/F/Avoid).
 - **`install.sh` hardcodes the file lists.** Adding a skill or agent requires also adding its name to the `SKILLS=(…)` or `AGENTS=(…)` array in `install.sh` (and the command-reference echo block), or it won't be installed. The README "All 16 Commands" / project-structure section should be updated too.
 - **Risk score is inverted**: higher = lower risk, so it composes correctly into the weighted total. Preserve that convention in `agents/trade-risk.md` and `trade-analyze`.
+- **Hardcoded destinations**: Drive folder `InvestmentSummary` (holdings source + archive root) and Slack `#portfolio-updates` (slice-8 `/trade routine --cloud` digest target) are written directly into skill prose. To change either, edit the skill — there is no config file.
 
 ## Conventions
 
