@@ -41,12 +41,36 @@ from api.list import list_op
 from api.fetch import fetch_op
 from api.delete import delete_op
 
+def _env_check_op(body: dict) -> dict:
+    """Diagnostic: report which env vars are PRESENT on the deployed proxy.
+    Returns lengths only — NEVER raw values. Auth still required (bearer
+    must be valid), so this endpoint can't leak structure to outsiders.
+    Used to debug "is PINECONE_API_KEY actually set on Vercel" questions
+    without grabbing dashboard logs.
+    """
+    keys = [
+        "PINECONE_API_KEY",
+        "PROXY_AUTH_TOKEN",
+        "PINECONE_INDEX",
+        "PINECONE_EMBED_MODEL",
+        "UPSTASH_REDIS_REST_URL",
+        "UPSTASH_REDIS_REST_TOKEN",
+    ]
+    return {
+        "env_presence": {
+            k: {"set": k in os.environ, "length": len(os.environ.get(k, ""))}
+            for k in keys
+        },
+    }
+
+
 OPS = {
     "/upsert": upsert_op,
     "/query":  query_op,
     "/list":   list_op,
     "/fetch":  fetch_op,
     "/delete": delete_op,
+    "/_env":   _env_check_op,
 }
 
 
