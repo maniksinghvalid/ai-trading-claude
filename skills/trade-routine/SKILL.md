@@ -19,8 +19,8 @@ financial advice. Always do your own due diligence.**
 > ⚠️ **NOT SAFE TO INVOKE CONCURRENTLY.** Pinecone upserts are idempotent,
 > but CWD file writes (`TRADE-ROUTINE-<ts>.md`, `TRADE-QUICK-*.md`) and
 > Slack deliveries are NOT. Run one routine at a time per CWD. If you need
-> parallel runs across portfolios, use distinct CWDs and (eventually,
-> slice 7.5+) distinct Pinecone namespaces.
+> parallel runs across portfolios, use distinct CWDs and distinct
+> `PINECONE_NAMESPACE` values.
 
 ---
 
@@ -30,14 +30,18 @@ Activates on:
 - `/trade routine` — default daily sweep
 - `/trade routine --max-escalations N` — override the analyze-cap
   (default 10; raise for portfolios > 30 tickers)
-- `/trade routine --cloud` — **slice 8 only;** posts the digest to
-  `#portfolio-updates` (channel ID `C0B712ARA7M`) by default via
-  `slack_send_message`. While slice 8 isn't wired yet, print
-  "cloud mode not yet implemented (slice 8 deliverable); falling
-  back to local mode" and continue. Do NOT silently drop the flag.
-- `/trade routine --cloud --slack-channel <id>` — optional override of
-  the default destination (e.g., a test channel or a personal DM
-  channel ID). Same slice-8 "not yet implemented" notice applies.
+- `/trade routine --cloud` — after the local sweep completes, posts the
+  TRADE-ROUTINE digest to `#portfolio-updates` (channel ID `C0B712ARA7M`)
+  via `mcp__claude_ai_Slack__slack_send_message` and uploads the full
+  `TRADE-ROUTINE-<ts>.md` to the InvestmentSummary Drive folder
+  (`1LM9GgcwKq-_pPVRfysRrR_m2qMXMjyxm`) via
+  `mcp__claude_ai_Google_Drive__create_file`. Slack OR Drive failures
+  are non-fatal warnings (digest still in CWD; per-ticker reports
+  already archived via `ingest --archive`). See "Output routing —
+  cloud branch" below for the full delivery contract.
+- `/trade routine --cloud --slack-channel <id>` — overrides the default
+  Slack destination (test channel, personal DM channel ID, different
+  workspace fork). Drive upload still targets InvestmentSummary.
 
 ---
 
@@ -48,9 +52,12 @@ Activates on:
 Parse the command line for:
 - `--max-escalations N` → set `MAX_ESCALATIONS` (default 10)
 - `--slack-channel <id>` → set `SLACK_CHANNEL_ID`; **default
-  `C0B712ARA7M` (`#portfolio-updates`)**. Capture but ignore for slice 6
-  (slice 8 wires the actual `slack_send_message` call).
-- `--cloud` → capture; print the slice-8 notice; continue local
+  `C0B712ARA7M` (`#portfolio-updates`)**. Only consulted when `--cloud`
+  is set; otherwise captured and ignored.
+- `--cloud` → set `CLOUD_MODE=1`. Triggers the cloud delivery branch
+  after the local sweep completes (see "Output routing — cloud
+  branch"). If unset, `SLACK_CHANNEL_ID` is ignored and the routine
+  finishes after the local terminal summary.
 
 ### P1 — Generate `run_id`
 
@@ -358,13 +365,15 @@ recommend-tier output>
 Ingest the digest too so future sessions can recall "the last routine
 sweep" — but the digest is NOT a per-ticker record so we do NOT use
 `trade_memory.py ingest` here (the schema is for per-ticker reports). The
-routine digest lives only as a CWD file + Drive archive (slice 8).
+routine digest lives only as a CWD file (plus a Drive archive copy when
+`--cloud` is set; see "Output routing — cloud branch").
 
 ---
 
-## Output routing (current = local)
+## Output routing
 
-For slice 6:
+### Local (always)
+
 - `TRADE-ROUTINE-<ts>.md` in CWD
 - Per-ticker analysis/quick reports in CWD (already written by the
   respective skills)
@@ -377,19 +386,84 @@ For slice 6:
     Notable: <one-line summary of any signal changes / escalations>
   ```
 
-For slice 8 (not yet wired):
-- `--cloud` will add Slack channel post (`#portfolio-updates`, channel ID
-  `C0B712ARA7M` — hardcoded default per the plan-doc §4) + Drive digest
-  upload. Delivery via `slack_send_message`; long digests escalate to
-  `slack_create_canvas`.
-- `--slack-channel <id>` overrides the default channel for one routine
-  (test channel, personal DM, etc.).
-- Different-user note: if your Slack workspace doesn't contain
-  `C0B712ARA7M`, either create a `#portfolio-updates` channel in your
-  workspace and update the hardcoded ID here, or pass `--slack-channel
-  <id>` per-routine.
-- This skill prints "cloud mode not yet implemented (slice 8); falling
-  back to local mode" when those flags are passed.
+### Cloud branch (when `--cloud` is set)
+
+After the local terminal summary prints, perform Slack delivery, then
+Drive upload, then a one-line cloud-summary. Both deliveries are
+**non-fatal warnings** on failure — the digest already exists in CWD
+and per-ticker records already landed in Pinecone (via `ingest`) and
+Drive (via `ingest --archive`), so the routine is complete even if
+delivery fails. Do NOT exit non-zero on Slack/Drive failure; print a
+single `[warn] …` line on stderr and continue to the next step.
+
+**Pre-flight env check.** Verify `PINECONE_PROXY_URL` and
+`PINECONE_PROXY_TOKEN` are present in the environment. If both are
+set, `trade_memory.py` auto-routes all Pinecone ops through the
+Vercel HTTPS proxy (slice 7.5). If either is missing, print:
+`[warn] --cloud set but PINECONE_PROXY_URL / PINECONE_PROXY_TOKEN
+missing; per-ticker records used the local Pinecone SDK path.
+Continuing with Slack + Drive delivery.` Continue — the cloud branch
+is about delivery destinations, not transport.
+
+**Step 1 — Slack delivery.** Resolve the channel:
+
+```
+TARGET_CHANNEL_ID = SLACK_CHANNEL_ID  # from --slack-channel <id>, default C0B712ARA7M
+```
+
+Assemble a Slack-friendly digest body — short version of the
+TRADE-ROUTINE markdown: title line + `Tickers / analyze / quick /
+escalated / deferred` counters + the per-ticker delta table + the
+Notable / Data Gaps sections + a footer pointing to the Drive copy.
+Strip the in-CWD-only sections (full report URLs, raw fixture
+listings). Include the disclaimer.
+
+Then branch on payload size:
+
+| Body length | Delivery mechanism |
+|---|---|
+| ≤ 3000 chars | `mcp__claude_ai_Slack__slack_send_message` with `channel=TARGET_CHANNEL_ID` and `text=<body>` |
+| > 3000 chars | `mcp__claude_ai_Slack__slack_create_canvas` with `channel_id=TARGET_CHANNEL_ID`, a title like `TRADE-ROUTINE <RUN_ID>`, and the full digest markdown as content. Then post a one-line `slack_send_message` to the same channel linking the canvas. |
+
+On any Slack error (channel not found, rate-limited, token expired,
+canvas-creation failure), print:
+`[warn] Slack delivery failed (<reason>); digest still in CWD as
+TRADE-ROUTINE-<ts>.md` and continue to Step 2.
+
+**Step 2 — Drive archive upload.** Upload the full
+`TRADE-ROUTINE-<ts>.md` to the InvestmentSummary folder:
+
+```
+DRIVE_ARCHIVE_FOLDER_ID = "1LM9GgcwKq-_pPVRfysRrR_m2qMXMjyxm"
+```
+
+Call `mcp__claude_ai_Google_Drive__create_file` with the digest
+contents, `parents=[DRIVE_ARCHIVE_FOLDER_ID]`, `name=TRADE-ROUTINE-<ts>.md`,
+and `mime_type="text/markdown"`. The per-ticker reports are NOT
+re-uploaded here — `trade_memory.py ingest --archive` already
+deposited them in the same folder under `<TICKER>/` subfolders
+during the sweep.
+
+On any Drive error (auth expired, folder not found, quota exceeded),
+print: `[warn] Drive upload failed (<reason>); digest still in CWD`
+and continue to Step 3.
+
+**Step 3 — Cloud summary line.** Append one line to the terminal
+summary already printed by the local block:
+
+```
+  Cloud: slack=<ok|warn>  drive=<ok|warn>  channel=<TARGET_CHANNEL_ID>
+```
+
+Use `ok` if the call returned success, `warn` if it failed (the
+preceding stderr warning already explained why).
+
+**Different-user note.** If your Slack workspace doesn't contain
+`C0B712ARA7M`, either create a `#portfolio-updates` channel in your
+workspace and update the hardcoded ID at the top of this skill (and
+`skills/trade-holdings/SKILL.md`), or pass `--slack-channel <id>`
+on every cloud routine. Same applies to the Drive folder if your
+holdings live somewhere other than InvestmentSummary.
 
 ---
 
@@ -405,6 +479,9 @@ For slice 8 (not yet wired):
 | Escalation cap reached | Downgrade subsequent analyzes to quicks; flag deferred tickers in the digest |
 | Holdings file has < 1 ticker | Abort with "no tickers to sweep" |
 | Holdings file has > 100 tickers | Warn but continue; the escalation cap protects subagent budget |
+| `--cloud` set, `PINECONE_PROXY_URL`/`PINECONE_PROXY_TOKEN` missing | Warn (see "Pre-flight env check"); continue Slack + Drive delivery |
+| `--cloud` set, Slack send fails (channel not found / rate-limit / token expired / canvas error) | `[warn]` on stderr; continue to Drive step; digest still in CWD |
+| `--cloud` set, Drive upload fails (auth expired / folder missing / quota) | `[warn]` on stderr; continue to cloud-summary line; digest still in CWD |
 
 ---
 
