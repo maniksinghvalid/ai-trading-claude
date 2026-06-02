@@ -42,11 +42,9 @@ from api.fetch import fetch_op
 from api.delete import delete_op
 
 def _env_check_op(body: dict) -> dict:
-    """Diagnostic: report which env vars are PRESENT on the deployed proxy.
-    Returns lengths only — NEVER raw values. Auth still required (bearer
-    must be valid), so this endpoint can't leak structure to outsiders.
-    Used to debug "is PINECONE_API_KEY actually set on Vercel" questions
-    without grabbing dashboard logs.
+    """Diagnostic: report env-var presence + Pinecone SDK reachability.
+    Lengths only — NEVER raw values. Bearer-gated. Used to debug live-deploy
+    runtime errors without dashboard log access.
     """
     keys = [
         "PINECONE_API_KEY",
@@ -56,12 +54,63 @@ def _env_check_op(body: dict) -> dict:
         "UPSTASH_REDIS_REST_URL",
         "UPSTASH_REDIS_REST_TOKEN",
     ]
-    return {
-        "env_presence": {
-            k: {"set": k in os.environ, "length": len(os.environ.get(k, ""))}
-            for k in keys
-        },
+    env_presence = {
+        k: {"set": k in os.environ, "length": len(os.environ.get(k, ""))}
+        for k in keys
     }
+
+    # Probe Pinecone connectivity. Anything that fails here gets surfaced
+    # as a structured response — the goal is diagnostics, not strict
+    # status-code-as-state.
+    pinecone_probe = {}
+    try:
+        import pinecone as _pc_mod
+        pinecone_probe["sdk_version"] = getattr(_pc_mod, "__version__", "?")
+    except Exception as e:
+        pinecone_probe["sdk_import_error"] = f"{type(e).__name__}: {e}"
+        return {"env_presence": env_presence, "pinecone_probe": pinecone_probe}
+
+    try:
+        from _lib import pinecone_client
+        client = pinecone_client.get_client()
+        pinecone_probe["client_init"] = "ok"
+    except Exception as e:
+        pinecone_probe["client_init_error"] = f"{type(e).__name__}: {e}"
+        return {"env_presence": env_presence, "pinecone_probe": pinecone_probe}
+
+    try:
+        idx_list = client.list_indexes()
+        # Try a few access patterns to be resilient across SDK versions
+        names = []
+        try:
+            names = [i.name for i in idx_list]
+        except Exception:
+            try:
+                names = [i["name"] for i in idx_list]
+            except Exception:
+                names = list(idx_list)
+        pinecone_probe["list_indexes_ok"] = True
+        pinecone_probe["indexes"] = names
+    except Exception as e:
+        pinecone_probe["list_indexes_error"] = f"{type(e).__name__}: {e}"
+        return {"env_presence": env_presence, "pinecone_probe": pinecone_probe}
+
+    try:
+        idx_name = os.environ.get("PINECONE_INDEX", "trade-reports")
+        index = pinecone_client.get_index()
+        stats = index.describe_index_stats()
+        # Pinecone's stats object is dict-like; extract namespaces presence
+        ns = getattr(stats, "namespaces", None)
+        if ns is None and hasattr(stats, "get"):
+            ns = stats.get("namespaces", {})
+        ns_names = list(ns.keys()) if ns else []
+        pinecone_probe["target_index"] = idx_name
+        pinecone_probe["index_stats_ok"] = True
+        pinecone_probe["namespaces"] = ns_names
+    except Exception as e:
+        pinecone_probe["index_stats_error"] = f"{type(e).__name__}: {e}"
+
+    return {"env_presence": env_presence, "pinecone_probe": pinecone_probe}
 
 
 OPS = {
