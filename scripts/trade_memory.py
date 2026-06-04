@@ -225,13 +225,30 @@ class VectorStore:
                 "before running this command."
             )
 
-    def _proxy_post(self, op: str, payload: dict, timeout: float = 15.0):
+    def _proxy_post(self, op: str, payload: dict, timeout: float = 15.0,
+                    attempts: int = None, backoff: float = 0.5):
         """POST a JSON payload to ``<proxy_url>/<op>`` with bearer auth.
 
         Returns the parsed JSON response on 200. Raises ``ProxyHTTPError``
         on any other status with the status code + response body attached
         so callers can branch (e.g. doctor's auth check expects 400, not
         200).
+
+        Transient failures are retried with exponential backoff up to
+        ``attempts`` total tries (default 3; override via the
+        ``TRADE_PROXY_MAX_ATTEMPTS`` env var, e.g. ``1`` to disable retries
+        in tests). A failure is "transient" when it is:
+          - a network error / timeout (surfaced as status 0), or
+          - an HTTP 5xx (server-side), or
+          - an HTTP 403 — the proxy app itself NEVER returns 403 (every
+            path in proxy/app.py emits 401/429/400/404/405/500/200), so a
+            403 is always an upstream Vercel edge/firewall rejection, e.g.
+            the intermittent ``Host not in allowlist`` plaintext seen
+            during custom-domain propagation. These clear on retry.
+        Deterministic statuses (400 validation, 401 auth, 404, 405, 429
+        rate-limit) are NOT retried — they raise on the first attempt so
+        doctor's 400-expecting auth check stays fast and real client/auth
+        errors surface immediately instead of after N backoffs.
 
         If ``VERCEL_PROTECTION_BYPASS`` is set (the user kept Vercel
         Deployment Protection on and generated a Protection Bypass for
@@ -243,6 +260,14 @@ class VectorStore:
         import json as _json
         import urllib.request
         import urllib.error
+        import socket
+        import time
+        if attempts is None:
+            try:
+                attempts = int(os.environ.get("TRADE_PROXY_MAX_ATTEMPTS", "3"))
+            except ValueError:
+                attempts = 3
+        attempts = max(1, attempts)
         url = self.proxy_url.rstrip("/") + "/" + op
         body = _json.dumps(payload).encode("utf-8")
         headers = {
@@ -264,18 +289,46 @@ class VectorStore:
             headers=headers,
             method="POST",
         )
-        try:
-            with urllib.request.urlopen(req, timeout=timeout) as resp:
-                return _json.loads(resp.read().decode("utf-8"))
-        except urllib.error.HTTPError as e:
-            raw = e.read().decode("utf-8", errors="replace")
+
+        def _retryable(status: int) -> bool:
+            # 0 = network/timeout, 5xx = server, 403 = Vercel edge layer
+            # (the app never emits 403). Everything else (400/401/404/405/
+            # 429) is deterministic and must fail fast.
+            return status == 0 or status == 403 or status >= 500
+
+        last_err = None
+        for attempt in range(1, attempts + 1):
             try:
-                body = _json.loads(raw)
-            except Exception:
-                body = {"raw": raw}
-            raise ProxyHTTPError(e.code, body, url)
-        except urllib.error.URLError as e:
-            raise ProxyHTTPError(0, {"error": "network", "reason": str(e)}, url)
+                with urllib.request.urlopen(req, timeout=timeout) as resp:
+                    return _json.loads(resp.read().decode("utf-8"))
+            except urllib.error.HTTPError as e:
+                # HTTPError is a URLError subclass — must be caught first.
+                raw = e.read().decode("utf-8", errors="replace")
+                try:
+                    parsed = _json.loads(raw)
+                except Exception:
+                    parsed = {"raw": raw}
+                last_err = ProxyHTTPError(e.code, parsed, url)
+                if not _retryable(e.code) or attempt == attempts:
+                    raise last_err
+            except (urllib.error.URLError, socket.timeout) as e:
+                # Connect errors/timeouts (URLError) and read timeouts
+                # (socket.timeout, not a URLError subclass) — both transient.
+                last_err = ProxyHTTPError(
+                    0, {"error": "network", "reason": str(e)}, url
+                )
+                if attempt == attempts:
+                    raise last_err
+            # Transient failure with attempts remaining: back off and retry.
+            delay = backoff * (2 ** (attempt - 1))
+            sys.stderr.write(
+                f"[proxy-retry] {op} attempt {attempt}/{attempts} failed "
+                f"(status {last_err.status_code}); retrying in {delay:.1f}s\n"
+            )
+            time.sleep(delay)
+        # Defensive: the loop always returns or raises above. Re-raise the
+        # last error rather than fall through to None on any unforeseen path.
+        raise last_err
 
     @property
     def client(self):
