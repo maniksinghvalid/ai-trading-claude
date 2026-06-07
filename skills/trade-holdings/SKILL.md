@@ -132,6 +132,24 @@ Phases are strictly ordered. Do not skip ahead.
    than 100, surface the raw extraction and ask the user to confirm. Most
    real portfolios sit in the 5–30 range.
 
+6. **Position quantities (best-effort, optional).** While extracting tickers
+   from tabular sources, ALSO capture the share count and cost basis when the
+   row exposes them — this powers position-aware options strategy downstream:
+   - **Shares/quantity:** a column labeled `Shares`, `Quantity`, `Qty`,
+     `Units`, or `Position`, OR the second token in an inline "AAPL 100" form.
+     Parse to a non-negative number (strip commas; accept fractional shares).
+   - **Cost basis (optional):** a column labeled `Cost`, `Avg Cost`,
+     `Cost Basis`, `Book Value`, `Price Paid`, or `Avg Price`. Parse to USD.
+   - Pair each quantity with its row's ticker. If a ticker appears in multiple
+     accounts, SUM the share counts (share-weight the cost basis when both are
+     present; otherwise leave cost basis null).
+   - **Graceful degradation:** share/cost columns are frequently absent (the
+     default user's master is `.xlsm` → docx fallback, which often lists
+     tickers only). If a ticker has no parseable quantity, record
+     `shares: null` — NEVER invent a count. A held ticker with unknown size is
+     still a valid LONG position; the options layer treats null shares as
+     "held, size unknown" (held-flag mode).
+
 ### PHASE 3 — Output
 
 Print to the terminal, in this order:
@@ -162,6 +180,7 @@ Print to the terminal, in this order:
    source_modified: <YYYY-MM-DD>
    generated_at: <ISO-8601 with tz>
    ticker_count: <N>
+   positions_available: <true|false>   # true if ≥1 ticker has a parsed share count
    ---
 
    # Holdings — <N> tickers
@@ -173,7 +192,20 @@ Print to the terminal, in this order:
    - AAPL
    - CLOV
    ...
+
+   ## Positions
+
+   | Ticker | Shares | Cost Basis |
+   |--------|--------|------------|
+   | AAPL | 100 | 150.00 |
+   | DIVO | — | — |
    ```
+
+   `## Positions` is additive — the routine still reads `## Tickers` for the
+   sweep loop and only consults `## Positions` (when present) for options
+   sizing. Use `—` for unknown shares/cost so the table stays aligned. This
+   template feeds **both** the CWD `TRADE-HOLDINGS.md` and the
+   `~/.claude/trade/TRADE-HOLDINGS.md` cache below.
 
 4. Write the same content to `~/.claude/trade/TRADE-HOLDINGS.md` — this is
    the **fallback cache** that `/trade routine` reads when Drive is
@@ -329,6 +361,9 @@ connect it later.
    unavailable; using cached holdings from <date>` line — that warning is
    the routine's responsibility, not this skill's.
 7. ALWAYS include the disclaimer in the output (above).
+8. NEVER fabricate share counts or cost basis. Use `—`/null when a quantity
+   isn't present in the source. A held ticker with unknown size is LONG with
+   unknown size, not FLAT.
 
 **DISCLAIMER: This is for educational and research purposes only. Not
 financial advice. Always do your own due diligence.**
