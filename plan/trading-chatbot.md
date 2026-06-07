@@ -119,13 +119,17 @@ The chatbot depends on these stable surfaces from the producer:
 | `schema_version` | int | yes | Currently `1`. Increments on breaking changes (field rename, type change, enum removal). Additive changes do NOT bump it. Validate on read; refuse unknown majors. |
 | `ticker` | string | yes | UPPERCASE |
 | `company` | string | yes | Plain company name (mixed case OK) |
-| `report_type` | string | yes | ANALYSIS / THESIS / TECHNICAL / FUNDAMENTAL / SENTIMENT / RISK / EARNINGS / QUICK |
+| `report_type` | string | yes | ANALYSIS / THESIS / TECHNICAL / FUNDAMENTAL / SENTIMENT / RISK / EARNINGS / QUICK / OPTIONS |
 | `generated_at` | string (ISO-8601) | yes | full timestamp |
 | `generated_date` | string (YYYY-MM-DD) | yes | derived from `generated_at` |
 | `signal` | string | when computed | STRONG BUY / BUY / HOLD / NEUTRAL / CAUTION / AVOID — UPPERCASE (exactly 6 values) |
 | `grade` | string | when computed | A+ / A / B / C / D / F — single-letter only, UPPERCASE (exactly 6 values; no B+/C+/C-/D+) |
 | `composite_score` | int | ANALYSIS only | 0–100 |
 | `technical_score`, `fundamental_score`, `sentiment_score`, `risk_score`, `thesis_score` | int | per-dimension reports | 0–100; `risk_score` is INVERTED (higher = safer) |
+| `iv_rank` | int | OPTIONS only | 0–100 implied-vol rank |
+| `strategy_outlook` | string | OPTIONS only | BULLISH / BEARISH / NEUTRAL / INCOME / HEDGE |
+| `recommended_strategy` | string | OPTIONS only | primary strategy name (free text, e.g. Covered Call) |
+| `position_bias` | string | OPTIONS only | LONG / FLAT |
 | `price_at_analysis`, `price_target`, `stop_loss` | float | when applicable | USD |
 | `catalysts` | string (comma-joined) | when applicable | List flattened to comma-separated |
 | `nearest_catalyst_date` | string (YYYY-MM-DD) | when applicable | |

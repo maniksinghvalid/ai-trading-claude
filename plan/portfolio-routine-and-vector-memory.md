@@ -485,7 +485,8 @@ Pinecone metadata limit ~40 KB/record). `id = <TICKER>:<TYPE>:<YYYYMMDD-HHMM>:<s
 Single namespace `trade`. Metadata (flat scalars; lists comma-joined; **signal/grade UPPERCASE**):
 `schema_version, ticker, company, report_type, generated_at, generated_date, composite_score,
 technical_score, fundamental_score, sentiment_score, risk_score (INVERTED — higher=safer),
-thesis_score, signal, grade, price_at_analysis, price_target, stop_loss, catalysts,
+thesis_score, iv_rank, strategy_outlook, recommended_strategy, position_bias (OPTIONS only),
+signal, grade, price_at_analysis, price_target, stop_loss, catalysts,
 nearest_catalyst_date, run_id, source_path, section, chunk_index` + chunk text.
 
 **Drive archive:** when `--archive` is passed and `TRADE_DRIVE_ARCHIVE_FOLDER_ID` is set, the
@@ -539,7 +540,7 @@ service. Stability rules:
 | `schema_version` | int | yes | Currently `1`. Increments on breaking changes (field rename, type change, enum-value removal). Additive changes (new fields, new enum values) do NOT bump it. Consumers SHOULD validate on read and refuse unknown majors. |
 | `ticker` | string | yes | UPPERCASE; pattern `^[A-Z0-9.\-]+$` |
 | `company` | string | yes | Plain company name (mixed case OK) |
-| `report_type` | enum | yes | `ANALYSIS` / `THESIS` / `TECHNICAL` / `FUNDAMENTAL` / `SENTIMENT` / `RISK` / `EARNINGS` / `QUICK` |
+| `report_type` | enum | yes | `ANALYSIS` / `THESIS` / `TECHNICAL` / `FUNDAMENTAL` / `SENTIMENT` / `RISK` / `EARNINGS` / `QUICK` / `OPTIONS` |
 | `generated_at` | string (ISO-8601) | yes | Full timestamp with tz offset |
 | `generated_date` | string (YYYY-MM-DD) | yes | Derived from `generated_at` |
 | `composite_score` | int (0–100) | ANALYSIS only | null otherwise |
@@ -573,7 +574,7 @@ trade_report: true
 schema_version: 1
 ticker: AAPL
 company: Apple Inc.
-report_type: ANALYSIS        # ANALYSIS|THESIS|TECHNICAL|FUNDAMENTAL|SENTIMENT|RISK|EARNINGS|QUICK
+report_type: ANALYSIS        # ANALYSIS|THESIS|TECHNICAL|FUNDAMENTAL|SENTIMENT|RISK|EARNINGS|QUICK|OPTIONS
 generated_at: 2026-05-30T14:30:00-07:00
 composite_score: 74          # ANALYSIS only; omit when N/A
 technical_score: 78
@@ -593,19 +594,23 @@ nearest_catalyst_date: 2026-07-31
 
 **Field availability by report_type** (which fields are valid where):
 
-| Field | ANALYSIS | THESIS | TECHNICAL | FUNDAMENTAL | SENTIMENT | RISK | EARNINGS | QUICK |
-|-------|----------|--------|-----------|-------------|-----------|------|----------|-------|
-| `schema_version` | ✓ | ✓ | ✓ | ✓ | ✓ | ✓ | ✓ | ✓ |
-| `composite_score` | ✓ | ✗ | ✗ | ✗ | ✗ | ✗ | ✗ | ✗ |
-| `technical_score` | ✓ | ✗ | ✓ | ✗ | ✗ | ✗ | ✗ | ✗ |
-| `fundamental_score` | ✓ | ✗ | ✗ | ✓ | ✗ | ✗ | ✗ | ✗ |
-| `sentiment_score` | ✓ | ✗ | ✗ | ✗ | ✓ | ✗ | ✗ | ✗ |
-| `risk_score` | ✓ | ✗ | ✗ | ✗ | ✗ | ✓ | ✗ | ✗ |
-| `thesis_score` | ✓ | ✓ | ✗ | ✗ | ✗ | ✗ | ✗ | ✗ |
-| `signal`, `grade` | ✓ | ✓ (thesis-derived) | ✓ (per-dim) | ✓ (per-dim) | ✓ (per-dim) | ✓ (per-dim) | ✗ | ✓ |
-| `price_at_analysis` | ✓ | ✓ | ✓ | ✓ | ✓ | ✓ | ✓ | ✓ |
-| `price_target`, `stop_loss` | ✓ | ✓ | ✓ | ✗ | ✗ | ✓ | ✗ | ✗ |
-| `catalysts`, `nearest_catalyst_date` | ✓ | ✓ | ✗ | ✗ | ✗ | ✗ | ✓ | ✗ |
+| Field | ANALYSIS | THESIS | TECHNICAL | FUNDAMENTAL | SENTIMENT | RISK | EARNINGS | QUICK | OPTIONS |
+|-------|----------|--------|-----------|-------------|-----------|------|----------|-------|---------|
+| `schema_version` | ✓ | ✓ | ✓ | ✓ | ✓ | ✓ | ✓ | ✓ | ✓ |
+| `composite_score` | ✓ | ✗ | ✗ | ✗ | ✗ | ✗ | ✗ | ✗ | ✗ |
+| `technical_score` | ✓ | ✗ | ✓ | ✗ | ✗ | ✗ | ✗ | ✗ | ✗ |
+| `fundamental_score` | ✓ | ✗ | ✗ | ✓ | ✗ | ✗ | ✗ | ✗ | ✗ |
+| `sentiment_score` | ✓ | ✗ | ✗ | ✗ | ✓ | ✗ | ✗ | ✗ | ✗ |
+| `risk_score` | ✓ | ✗ | ✗ | ✗ | ✗ | ✓ | ✗ | ✗ | ✗ |
+| `thesis_score` | ✓ | ✓ | ✗ | ✗ | ✗ | ✗ | ✗ | ✗ | ✗ |
+| `iv_rank` | ✗ | ✗ | ✗ | ✗ | ✗ | ✗ | ✗ | ✗ | ✓ |
+| `strategy_outlook` | ✗ | ✗ | ✗ | ✗ | ✗ | ✗ | ✗ | ✗ | ✓ |
+| `recommended_strategy` | ✗ | ✗ | ✗ | ✗ | ✗ | ✗ | ✗ | ✗ | ✓ |
+| `position_bias` | ✗ | ✗ | ✗ | ✗ | ✗ | ✗ | ✗ | ✗ | ✓ |
+| `signal`, `grade` | ✓ | ✓ (thesis-derived) | ✓ (per-dim) | ✓ (per-dim) | ✓ (per-dim) | ✓ (per-dim) | ✗ | ✓ | ✓ (signal only, inherited) |
+| `price_at_analysis` | ✓ | ✓ | ✓ | ✓ | ✓ | ✓ | ✓ | ✓ | ✓ |
+| `price_target`, `stop_loss` | ✓ | ✓ | ✓ | ✗ | ✗ | ✓ | ✗ | ✗ | ✗ |
+| `catalysts`, `nearest_catalyst_date` | ✓ | ✓ | ✗ | ✗ | ✗ | ✗ | ✓ | ✗ | ✓ (date only) |
 
 Skills populate only fields they computed. `trade_memory.py` does not enforce required fields;
 missing values are stored as `null`. `latest --type QUICK` returns null for `composite_score`
