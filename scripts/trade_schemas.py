@@ -74,6 +74,34 @@ class ReportType(str, Enum):
     RISK = "RISK"
     EARNINGS = "EARNINGS"
     QUICK = "QUICK"
+    OPTIONS = "OPTIONS"
+
+
+class StrategyOutlook(str, Enum):
+    """Options posture on an OPTIONS report — the 'manage/grow/hedge' framing.
+
+    INCOME = premium on an existing position (covered call, CSP).
+    HEDGE  = downside protection (protective put, collar).
+    BULLISH/BEARISH/NEUTRAL = directional/non-directional debit/credit plays.
+    """
+
+    BULLISH = "BULLISH"
+    BEARISH = "BEARISH"
+    NEUTRAL = "NEUTRAL"
+    INCOME = "INCOME"
+    HEDGE = "HEDGE"
+
+
+class PositionBias(str, Enum):
+    """The holder's existing stock position that conditioned the strategy.
+
+    Holdings yields only LONG / FLAT (InvestmentSummary has no shorts). Routine
+    OPTIONS reports are always LONG; a manual /trade options on an unheld name
+    is FLAT.
+    """
+
+    LONG = "LONG"
+    FLAT = "FLAT"
 
 
 # ---------------------------------------------------------------------------
@@ -135,6 +163,12 @@ class RecordMetadata(BaseModel):
         default=None, ge=0, le=100
     )  # INVERTED — higher = safer
     thesis_score: Optional[int] = Field(default=None, ge=0, le=100)
+
+    # Options posture (OPTIONS report_type only; all optional & additive)
+    iv_rank: Optional[int] = Field(default=None, ge=0, le=100)
+    strategy_outlook: Optional[str] = None  # validated against StrategyOutlook
+    recommended_strategy: Optional[str] = None  # primary strategy name (free text)
+    position_bias: Optional[str] = None  # validated against PositionBias
 
     # Derived labels
     signal: Optional[str] = None  # validated against Signal enum
@@ -207,6 +241,30 @@ class RecordMetadata(BaseModel):
             raise ValueError(
                 f"grade must be one of {sorted(valid)}; got {v!r} "
                 "(single-letter only — no B+/C+/C-/D+; per M4 cleanup)"
+            )
+        return v
+
+    @field_validator("strategy_outlook")
+    @classmethod
+    def _strategy_outlook_value(cls, v: Optional[str]) -> Optional[str]:
+        if v is None:
+            return None
+        valid = {o.value for o in StrategyOutlook}
+        if v not in valid:
+            raise ValueError(
+                f"strategy_outlook must be one of {sorted(valid)}; got {v!r}"
+            )
+        return v
+
+    @field_validator("position_bias")
+    @classmethod
+    def _position_bias_value(cls, v: Optional[str]) -> Optional[str]:
+        if v is None:
+            return None
+        valid = {p.value for p in PositionBias}
+        if v not in valid:
+            raise ValueError(
+                f"position_bias must be one of {sorted(valid)}; got {v!r}"
             )
         return v
 
@@ -286,4 +344,6 @@ if __name__ == "__main__":
     print(f"ReportType values: {sorted(t.value for t in ReportType)}")
     print(f"Signal values:     {sorted(s.value for s in Signal)}")
     print(f"Grade values:      {sorted(g.value for g in Grade)}")
+    print(f"StrategyOutlook:   {sorted(o.value for o in StrategyOutlook)}")
+    print(f"PositionBias:      {sorted(p.value for p in PositionBias)}")
     print(f"Allowed namespaces (slice 3a): {sorted(ALLOWED_NAMESPACES)}")
