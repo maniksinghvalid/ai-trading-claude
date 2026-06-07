@@ -19,6 +19,27 @@ This skill activates when the user runs:
 
 Extract the ticker symbol and optional directional bias. If no bias is given, present strategies for all outlooks.
 
+### Position & Signal Context (optional, passed by the routine)
+
+When `/trade options` is dispatched by `/trade routine`, the caller passes
+extra context inline; honor it when present, otherwise self-discover:
+
+- `POSITION_BIAS` = `LONG` (you hold the stock) or `FLAT` (you don't).
+  - From the routine: always `LONG` (every routine ticker is a holding).
+  - Manual invocation: read `~/.claude/trade/TRADE-HOLDINGS.md` → if the ticker
+    is in `## Tickers`, `LONG`; else `FLAT`.
+- `POSITION_SHARES` = integer share count, or `unknown`. From the holdings
+  `## Positions` table when `positions_available: true`; else `unknown`.
+- `ANALYZE_SIGNAL` = the latest composite signal (`STRONG BUY`…`AVOID`) and
+  `COMPOSITE_SCORE` (0-100). From the routine's just-completed `/trade analyze`;
+  a manual invocation may fetch it via
+  `trade_memory.py latest <TICKER> --type ANALYSIS` (best-effort; null OK).
+- `RUN_ID` = the sweep id to stamp on the record (routine only).
+
+A positional `bullish`/`bearish`/`neutral` arg overrides the signal-derived
+outlook for strategy *filtering*, but the record's `strategy_outlook` /
+`position_bias` still reflect reality.
+
 ## Data Collection Phase
 
 ### Step 1: Current Stock Price & Context
@@ -97,7 +118,35 @@ Extract: next earnings date, average historical earnings move (%), implied earni
 
 ## Strategy Selection Logic
 
-Based on the IV environment and directional outlook, recommend strategies from this matrix:
+Based on the IV environment and directional outlook, recommend strategies from this matrix.
+
+### Primary strategy selection (position × signal × IV)
+
+Pick the PRIMARY recommended strategy from this table, then fill in 3 alternates
+from the directional tables below. This is the "manage / grow / hedge" decision
+the routine relies on. Record the chosen `strategy_outlook` and `position_bias`
+in the frontmatter.
+
+| Position | Composite signal | IV environment | Primary strategy | `strategy_outlook` | Intent |
+|----------|------------------|----------------|------------------|--------------------|--------|
+| LONG | STRONG BUY / BUY | High IV (rank ≥50) | Covered Call (OTM) | INCOME | grow + income, keep upside room |
+| LONG | STRONG BUY / BUY | Low IV (rank <50) | Hold shares / Call Diagonal | BULLISH | grow, don't cap a cheap-IV runner |
+| LONG | HOLD / NEUTRAL | High IV | Covered Call (near-ATM) | INCOME | manage, harvest elevated premium |
+| LONG | HOLD / NEUTRAL | Low IV | Collar (costless-ish) | HEDGE | manage, cheap protection |
+| LONG | CAUTION / AVOID | any | Protective Put or Collar | HEDGE | hedge downside on a weakening name |
+| FLAT | STRONG BUY / BUY | High IV | Cash-Secured Put | INCOME | grow, get paid to enter |
+| FLAT | STRONG BUY / BUY | Low IV | Bull Call Spread / Long Call | BULLISH | grow, cheap directional |
+| FLAT | HOLD / NEUTRAL | High IV | Iron Condor / short premium | NEUTRAL | income on range-bound |
+| FLAT | CAUTION / AVOID | any | Bear Put Spread or stand aside | BEARISH | hedge/avoid; defined risk only |
+
+**Position sizing:**
+- Covered Call / Collar / Protective Put: contracts = `floor(POSITION_SHARES /
+  100)`. If `POSITION_SHARES = unknown`, state "size to your share count
+  (1 contract per 100 shares)" and DO NOT invent a number.
+- Cash-Secured Put / spreads: size by the risk-budget guidance in "Position
+  Sizing for Options" below (1-5% of account); never exceed it.
+- If LONG but `POSITION_SHARES < 100`, covered calls aren't available — fall
+  back to the FLAT row's directional/defined-risk play and say why.
 
 ### Bullish Strategies
 | Strategy | When to Use | Max Profit | Max Loss | Breakeven |
@@ -126,14 +175,34 @@ Based on the IV environment and directional outlook, recommend strategies from t
 
 ## Output Format
 
-Generate a file named `TRADE-OPTIONS-<TICKER>.md`:
+Generate a file named `TRADE-OPTIONS-<TICKER>.md` (when run by the routine,
+`TRADE-OPTIONS-<TICKER>-<YYYYMMDD-HHMM>.md`). It MUST begin with YAML
+frontmatter so the memory layer can index it:
 
 ```markdown
+---
+trade_report: true
+schema_version: 1
+ticker: <TICKER>
+company: <COMPANY NAME>
+report_type: OPTIONS
+generated_at: <ISO-8601 timestamp with tz offset>
+signal: <inherited ANALYZE_SIGNAL — one of STRONG BUY|BUY|HOLD|NEUTRAL|CAUTION|AVOID; omit the line if unknown>
+price_at_analysis: <current price as a number>
+iv_rank: <0-100 integer; omit the line if IV rank could not be found>
+strategy_outlook: <BULLISH|BEARISH|NEUTRAL|INCOME|HEDGE>
+recommended_strategy: <primary strategy name, e.g. "Covered Call">
+position_bias: <LONG|FLAT>
+nearest_catalyst_date: <YYYY-MM-DD of next earnings if within 60 days; else omit>
+run_id: <RUN_ID when dispatched by the routine; else omit>
+---
+
 # Options Analysis: <TICKER> — <COMPANY NAME>
 
 **Generated:** <current date and time>
 **Current Price:** $<price> | **Market Cap:** $<cap>
 **Next Earnings:** <date> (<X days away>)
+**Your Position:** <LONG <shares> shares | LONG (size unknown) | FLAT>
 
 > **DISCLAIMER:** This is for educational and research purposes only. Not financial advice. Always do your own due diligence.
 
@@ -404,6 +473,8 @@ Use Python for exact calculations. Approximate probability of profit estimates u
 4. **Management rules are mandatory.** Never recommend a trade without exit rules. Include profit target, stop loss, and time-based management.
 5. **Earnings context is critical.** If earnings are within 30 days, the analysis MUST address IV crush risk and include specific earnings play strategies.
 6. **Honest probability estimates.** Use delta as a rough proxy for probability when exact data is unavailable. Never overstate precision.
+7. **Strategy must match position + signal.** A LONG + CAUTION/AVOID ticker MUST lead with a HEDGE (protective put/collar), never a naked income play that adds downside. A FLAT ticker MUST NOT recommend covered calls. The `strategy_outlook` / `position_bias` frontmatter MUST match the prose.
+8. **Frontmatter honesty.** Omit any frontmatter line whose value is genuinely unavailable rather than writing a placeholder — but `strategy_outlook`, `recommended_strategy`, and `position_bias` are always required (they're decisions, not data lookups).
 
 ## Edge Cases
 
