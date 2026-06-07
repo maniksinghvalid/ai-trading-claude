@@ -58,6 +58,10 @@ Parse the command line for:
   after the local sweep completes (see "Output routing — cloud
   branch"). If unset, `SLACK_CHANNEL_ID` is ignored and the routine
   finishes after the local terminal summary.
+- `--no-options` → set `NO_OPTIONS=1`. Skips the Step 3d options overlay
+  entirely. Default (flag unset): the overlay runs for every analyze-tier
+  ticker, naturally bounded by the escalation cap (it only fires where
+  analyze fired).
 
 ### P1 — Generate `run_id`
 
@@ -100,7 +104,7 @@ Parse the cache's `## Tickers` bullet list to get the array of tickers.
 
 ```
 ESCALATIONS_USED=0
-TIER_COUNTS = { analyze: 0, quick: 0, escalated: 0, deferred: 0 }
+TIER_COUNTS = { analyze: 0, quick: 0, escalated: 0, deferred: 0, options: 0 }
 TICKER_RESULTS = []   # one row per ticker for the digest
 ```
 
@@ -273,6 +277,42 @@ If room remains:
    timestamp; analyze supersedes for tier decisions on the next sweep
    because its ANALYSIS type + newer timestamp wins in `latest`)
 
+### Step 3d — Options overlay (analyze-tier tickers only)
+
+Run ONLY when this ticker was processed at the **analyze** or **escalated**
+tier this sweep (NOT quick-kept, NOT deferred) and `--no-options` was not
+passed (`NO_OPTIONS` unset). This focuses options on positions that got a
+fresh full read and keeps cost bounded by the escalation cap.
+
+1. Resolve position context from `~/.claude/trade/TRADE-HOLDINGS.md`:
+   - `POSITION_BIAS=LONG` (every routine ticker is a holding).
+   - If the cache has `positions_available: true` and a `## Positions` row for
+     `$T` with a numeric Shares value → `POSITION_SHARES=<that number>`; else
+     `POSITION_SHARES=unknown`.
+2. Reuse the fresh analyze result from Step 3a/3c:
+   `ANALYZE_SIGNAL=<new_signal>`, `COMPOSITE_SCORE=<new_score>`.
+3. Capture one timestamp for this overlay so the filename and the ingest call
+   can't drift across a minute boundary:
+   ```bash
+   OPTS_TS=$(date +%Y%m%d-%H%M)
+   ```
+4. In the LLM context, invoke `/trade options $T` passing POSITION_BIAS,
+   POSITION_SHARES, ANALYZE_SIGNAL, COMPOSITE_SCORE, and `RUN_ID=$RUN_ID`. The
+   trade-options skill writes `TRADE-OPTIONS-$T-$OPTS_TS.md` with OPTIONS
+   frontmatter.
+5. Ingest it non-fatally (mirrors the QUICK ingest in Step 3b):
+   ```bash
+   python3 ~/.claude/skills/trade/scripts/trade_memory.py \
+       ingest "TRADE-OPTIONS-${T}-${OPTS_TS}.md" \
+       --archive --run-id "$RUN_ID" || true
+   ```
+6. `TIER_COUNTS.options++`. Capture `recommended_strategy` and
+   `strategy_outlook` from the report's frontmatter for the digest row.
+
+If `/trade options` fails or returns no usable strategy, log
+`[warn] $T: options overlay skipped (<reason>)` on stderr and continue — the
+overlay is supplementary and MUST NOT fail the sweep.
+
 ### Step 4 — Record digest row
 
 Push a row into `TICKER_RESULTS`:
@@ -285,6 +325,8 @@ Push a row into `TICKER_RESULTS`:
   delta_score: new_score - prior_score (null if either side null),
   prior_date,
   nearest_catalyst_date: (from new record),
+  options_strategy: <recommended_strategy or null>,
+  options_outlook: <strategy_outlook or null>,
   notes: <any [warn] / [escalate] lines for this ticker>,
 }
 ```
@@ -307,6 +349,7 @@ analyze_count: <TIER_COUNTS.analyze>
 quick_count: <TIER_COUNTS.quick>
 escalated_count: <TIER_COUNTS.escalated>
 deferred_count: <TIER_COUNTS.deferred>
+options_count: <TIER_COUNTS.options>
 max_escalations: <MAX_ESCALATIONS>
 ---
 
@@ -322,11 +365,11 @@ escalations; any deferrals due to cap; any data gaps>
 
 ## Per-Ticker Results
 
-| Ticker | Tier | Prior Signal | New Signal | Δ Score | Prior → New | Nearest Catalyst | Notes |
-|--------|------|--------------|------------|---------|-------------|------------------|-------|
-| AAPL | analyze | BUY | BUY | +2 | 72 → 74 | 2026-07-31 (earnings) | — |
-| CLOV | quick | AVOID | AVOID | — | — | — | held |
-| MARA | escalated | HOLD | BUY | +18 | 55 → 73 | — | signal flipped HOLD→BUY → re-analyzed |
+| Ticker | Tier | Prior Signal | New Signal | Δ Score | Prior → New | Nearest Catalyst | Options | Notes |
+|--------|------|--------------|------------|---------|-------------|------------------|---------|-------|
+| AAPL | analyze | BUY | BUY | +2 | 72 → 74 | 2026-07-31 (earnings) | INCOME: Covered Call | — |
+| CLOV | quick | AVOID | AVOID | — | — | — | — | held |
+| MARA | escalated | HOLD | BUY | +18 | 55 → 73 | — | INCOME: Cash-Secured Put | signal flipped HOLD→BUY → re-analyzed |
 | NIO | deferred | HOLD | — | — | — | — | escalation cap reached |
 | ... | ... | ... | ... | ... | ... | ... | ... |
 
@@ -413,10 +456,22 @@ TARGET_CHANNEL_ID = SLACK_CHANNEL_ID  # from --slack-channel <id>, default C0B71
 
 Assemble a Slack-friendly digest body — short version of the
 TRADE-ROUTINE markdown: title line + `Tickers / analyze / quick /
-escalated / deferred` counters + the per-ticker delta table + the
-Notable / Data Gaps sections + a footer pointing to the Drive copy.
-Strip the in-CWD-only sections (full report URLs, raw fixture
-listings). Include the disclaimer.
+escalated / deferred / options` counters + the per-ticker delta table +
+an **Options posture** block (one line per ticker where the overlay ran,
+omitted entirely if `options_count == 0`) + the Notable / Data Gaps
+sections + a footer pointing to the Drive copy. Strip the in-CWD-only
+sections (full report URLs, raw fixture listings). Include the disclaimer.
+
+The Options posture block (only for tickers whose Step 3d overlay ran):
+
+```
+Options posture (analyze-tier):
+  • AAPL — INCOME / Covered Call
+  • MARA — HEDGE / Protective Put
+```
+
+It is part of the digest body, so it falls under the same ≤3000 →
+message / >3000 → canvas size branch below.
 
 Then branch on payload size:
 
