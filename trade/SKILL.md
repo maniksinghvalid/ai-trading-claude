@@ -21,7 +21,7 @@ You are a comprehensive AI trading research and analysis system for Claude Code.
 | `/trade sector <sector>` | Sector rotation & momentum analysis | TRADE-SECTOR-[SECTOR].md |
 | `/trade compare <t1> <t2>` | Head-to-head stock comparison | TRADE-COMPARE-[T1]-vs-[T2].md |
 | `/trade thesis <ticker>` | Complete investment thesis with entry/exit plan | TRADE-THESIS-[TICKER].md |
-| `/trade options <ticker>` | Options strategy recommendations | TRADE-OPTIONS-[TICKER].md |
+| `/trade options <ticker>` | Options strategy — position-aware (covered call vs protective put vs CSP) + signal-aware; standalone or the routine's analyze-tier overlay; report → Pinecone | TRADE-OPTIONS-[TICKER].md |
 | `/trade portfolio` | Portfolio analysis & rebalancing recommendations | TRADE-PORTFOLIO.md |
 | `/trade holdings` | Read holdings from Google Drive (InvestmentSummary folder); writes cache used by `/trade routine` | TRADE-HOLDINGS.md (+ `~/.claude/trade/` cache) |
 | `/trade routine [--max-escalations N]` | Tiered daily sweep over the portfolio: per-ticker `recommend-tier` → analyze/quick dispatch, escalation on signal change, digest writer | TRADE-ROUTINE-[ts].md (+ per-ticker analyze/quick reports) |

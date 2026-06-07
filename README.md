@@ -377,7 +377,7 @@ The reference downstream consumer is `plan/trading-chatbot.md` — a separate we
 ```
 
 - `<TICKER>` — UPPERCASE ticker, matches `^[A-Z0-9.\-]+$`
-- `<TYPE>` — one of `ANALYSIS` / `THESIS` / `TECHNICAL` / `FUNDAMENTAL` / `SENTIMENT` / `RISK` / `EARNINGS` / `QUICK`
+- `<TYPE>` — one of `ANALYSIS` / `THESIS` / `TECHNICAL` / `FUNDAMENTAL` / `SENTIMENT` / `RISK` / `EARNINGS` / `QUICK` / `OPTIONS`
 - `<YYYYMMDD-HHMM>` — UTC timestamp; sortable lexically
 - `<section-slug>` — kebab-cased report section heading (`executive-summary`, `bull-vs-bear`, …)
 - `<chunk-n>` — 0-indexed chunk within section when prose exceeds Pinecone's per-record metadata limit (~40 KB, target ~1500 chars/chunk with overlap)
@@ -395,7 +395,7 @@ The full typed surface, mirrored byte-for-byte from `scripts/trade_schemas.py` a
 | `schema_version` | int | yes | Currently `1`. Increments on breaking changes only. Consumers SHOULD validate on read. |
 | `ticker` | string | yes | UPPERCASE; pattern `^[A-Z0-9.\-]+$` |
 | `company` | string | yes | Plain company name (mixed case OK) |
-| `report_type` | enum | yes | `ANALYSIS` / `THESIS` / `TECHNICAL` / `FUNDAMENTAL` / `SENTIMENT` / `RISK` / `EARNINGS` / `QUICK` |
+| `report_type` | enum | yes | `ANALYSIS` / `THESIS` / `TECHNICAL` / `FUNDAMENTAL` / `SENTIMENT` / `RISK` / `EARNINGS` / `QUICK` / `OPTIONS` |
 | `generated_at` | string (ISO-8601) | yes | Full timestamp with tz offset |
 | `generated_date` | string (YYYY-MM-DD) | yes | Derived from `generated_at` for date-bucket queries |
 | `composite_score` | int (0–100) | ANALYSIS only | null on QUICK / single-dimension reports |
@@ -404,6 +404,10 @@ The full typed surface, mirrored byte-for-byte from `scripts/trade_schemas.py` a
 | `sentiment_score` | int (0–100) | ANALYSIS, SENTIMENT | null otherwise |
 | `risk_score` | int (0–100) | ANALYSIS, RISK | **INVERTED — higher = safer.** Composes correctly into the weighted total. |
 | `thesis_score` | int (0–100) | ANALYSIS, THESIS | null otherwise |
+| `iv_rank` | int (0–100) | OPTIONS | Implied-vol rank; null on non-options reports. Additive field (no `schema_version` bump) |
+| `strategy_outlook` | enum | OPTIONS | `BULLISH` / `BEARISH` / `NEUTRAL` / `INCOME` / `HEDGE`. Additive |
+| `recommended_strategy` | string | OPTIONS | Primary strategy name (free text, e.g. `Covered Call`). Additive |
+| `position_bias` | enum | OPTIONS | `LONG` / `FLAT` — holder's stock position that conditioned the strategy. Additive |
 | `signal` | enum | when computed | `STRONG BUY` / `BUY` / `HOLD` / `NEUTRAL` / `CAUTION` / `AVOID` — UPPERCASE, exactly 6 values |
 | `grade` | enum | when computed | `A+` / `A` / `B` / `C` / `D` / `F` — single-letter only, exactly 6 values |
 | `price_at_analysis` | float | when computed | USD |
