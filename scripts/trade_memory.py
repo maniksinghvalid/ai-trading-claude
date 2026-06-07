@@ -239,16 +239,20 @@ class VectorStore:
         ``TRADE_PROXY_MAX_ATTEMPTS`` env var, e.g. ``1`` to disable retries
         in tests). A failure is "transient" when it is:
           - a network error / timeout (surfaced as status 0), or
-          - an HTTP 5xx (server-side), or
-          - an HTTP 403 — the proxy app itself NEVER returns 403 (every
-            path in proxy/app.py emits 401/429/400/404/405/500/200), so a
-            403 is always an upstream Vercel edge/firewall rejection, e.g.
-            the intermittent ``Host not in allowlist`` plaintext seen
-            during custom-domain propagation. These clear on retry.
-        Deterministic statuses (400 validation, 401 auth, 404, 405, 429
-        rate-limit) are NOT retried — they raise on the first attempt so
-        doctor's 400-expecting auth check stays fast and real client/auth
+          - an HTTP 5xx (server-side).
+        Deterministic statuses (400 validation, 401 auth, 403 forbidden, 404,
+        405, 429 rate-limit) are NOT retried — they raise on the first attempt
+        so doctor's 400-expecting auth check stays fast and real client/auth
         errors surface immediately instead of after N backoffs.
+
+        On 403 specifically: the proxy app itself NEVER emits 403 (every path
+        in proxy/app.py emits 401/429/400/404/405/500/200), so a 403 is always
+        a *persistent* infrastructure denial that will NOT clear on retry —
+        most often the Claude cloud-sandbox egress proxy
+        (``x-deny-reason: host_not_allowed`` / body ``Host not in allowlist``:
+        the proxy host is missing from the routine environment's Custom
+        allowed-domains), or a Vercel edge/firewall rule. We fail fast and let
+        ``doctor`` print the remediation rather than burning N backoffs.
 
         If ``VERCEL_PROTECTION_BYPASS`` is set (the user kept Vercel
         Deployment Protection on and generated a Protection Bypass for
@@ -291,10 +295,11 @@ class VectorStore:
         )
 
         def _retryable(status: int) -> bool:
-            # 0 = network/timeout, 5xx = server, 403 = Vercel edge layer
-            # (the app never emits 403). Everything else (400/401/404/405/
-            # 429) is deterministic and must fail fast.
-            return status == 0 or status == 403 or status >= 500
+            # 0 = network/timeout, 5xx = server — genuinely transient.
+            # 403 is a PERSISTENT edge/egress allowlist denial (the app never
+            # emits 403), so it must fail fast — retrying just wastes backoff.
+            # Everything else (400/401/403/404/405/429) is deterministic.
+            return status == 0 or status >= 500
 
         last_err = None
         for attempt in range(1, attempts + 1):
@@ -1400,6 +1405,22 @@ def cmd_doctor(args):
                     "check; the per-IP counter may be saturated.",
                 )
                 _escalate(1)
+            elif e.status_code == 403:
+                proxy_host = proxy_url.split("://")[-1].split("/")[0]
+                _line(
+                    "✗",
+                    f"Proxy BLOCKED (403) before reaching the function: "
+                    f"{e.body}. The proxy app never emits 403, so this is an "
+                    "egress/firewall ALLOWLIST denial, not an auth problem. In "
+                    "a cloud routine it's the Claude sandbox egress proxy: add "
+                    f"`{proxy_host}` to the routine environment's Network "
+                    "access → Custom → Allowed domains (code.claude.com/docs/"
+                    "en/claude-code-on-the-web §Network access). From a "
+                    "workstation, check Vercel firewall / Trusted-IPs rules.",
+                )
+                _escalate(2)
+                _emit_doctor_report(severity, lines)
+                return severity
             else:
                 _line(
                     "⚠",
