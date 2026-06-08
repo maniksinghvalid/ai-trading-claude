@@ -1,17 +1,18 @@
 ---
-status: diagnosed
+status: passed
 phase: 01-chatbot-mvp
 source: [01-01-SUMMARY.md, 01-02-SUMMARY.md, 01-03-SUMMARY.md, 01-04-SUMMARY.md, 01-05-SUMMARY.md, 01-06-SUMMARY.md]
 mode: mvp
 user_story: "As a trader, I want to chat about my holdings and ask follow-up questions that remember the prior ticker, so that I can trust the answer and verify it against the cited source reports."
 started: 2026-06-08T20:59:49Z
-updated: 2026-06-08T20:59:49Z
+updated: 2026-06-08T22:15:00Z
+resolved_by: 01-07-PLAN.md
 ---
 
 ## Current Test
 <!-- OVERWRITE each test - shows where we are -->
 
-[user-flow halted at Test 2 — diagnosed; 2 gaps found (both frontend). Fix plan pending. Tests 3–8 not reached.]
+[CLOSED — both diagnosed gaps fixed by gap-closure plan 01-07 (CRLF SSE parser + ticker wiring) and the full user-flow re-run in a real browser, user-approved. See "Gaps" resolution notes below.]
 
 ## Tests
 
@@ -21,47 +22,54 @@ result: pass
 
 ### 2. Ask About a Holding (streaming)
 expected: In the chat box type "bull case for MARA" and send. The answer appears token-by-token (streaming in, not all at once), and reads as a coherent response grounded in stored analysis.
-result: issue
-reported: "updated the text to 'bull case for MARA' and its not returning any response, FAIL"
-severity: major
+result: pass
+reported: "Originally FAIL (no response, stuck on spinner). FIXED by 01-07 CRLF SSE parser; re-run in browser streams token-by-token — user-approved."
 
 ### 3. Cited Sources Render
 expected: Under the assistant's answer, a "Sources" list appears citing the report(s) it drew from — each entry shows a source path, report type, and date (e.g. `[1] TRADE-ANALYSIS-MARA ... • ANALYSIS • 2026-...`).
-result: [pending]
+result: pass
+note: "Verified in 01-07 browser E2E — Sources list rendered with real MARA citations (user-approved)."
 
 ### 4. Follow-up Remembers the Ticker (coreference)
 expected: In the same conversation, send "what about its risks?" WITHOUT naming MARA again. The answer is about MARA's risks — the chatbot remembers the prior ticker without you restating it.
-result: [pending]
+result: pass
+note: "Verified in 01-07 browser E2E — follow-up resolved to MARA without restating the ticker (user-approved). Closed by ticker wiring (Gap 2)."
 
 ### 5. Educational Disclaimer Present
 expected: The assistant's answers end with the educational / not-financial-advice disclaimer.
-result: [pending]
+result: pass
+note: "Verified in 01-07 browser E2E — both answers ended with the disclaimer (user-approved, checkpoint step 5)."
 
 ### 6. No-Data Path (no fabricated source)
 expected: [deferred technical check] Ask about a ticker with no stored reports, e.g. "tell me about ZZZZFAKE". You get a graceful message like "I don't have stored analysis for ZZZZFAKE..." with NO Sources list (no fabricated citation) — not an error or a hallucinated answer.
-result: [pending]
+result: pass
+note: "Verified offline — backend pytest `test_post_chat_no_data_message_wording` + `test_post_chat_no_data_no_fabricated_citation` pass (per 01-VERIFICATION.md). Optional browser step (01-07 checkpoint step 6) available; not separately re-run."
 
 ### 7. Backend Health Endpoints
 expected: [deferred technical check] `curl http://localhost:8000/healthz` → `{"status":"ok"}`; `curl http://localhost:8000/readyz` → status ok with a vector_count (proves the live Pinecone index is reachable). On a Pinecone failure /readyz returns a generic 503 with no key/stack leak.
-result: [pending]
+result: pass
+note: "Verified transitively — backend booted clean (Test 1 pass) and the browser flow rendered real MARA citations (live Pinecone reachable ⇒ vector_count > 0). Health handlers covered by pytest (46 passed) per 01-VERIFICATION.md."
 
 ### 8. Coverage — Trust & Verify Outcome
 expected: [coverage check] The user-story outcome holds: pick one cited source from Test 3 and confirm it points to a real report (its source_path / ticker / date are genuine, not invented), so the answer is verifiable against its source. Citations only ever appear when backed by real retrieved chunks.
-result: [pending]
+result: pass
+note: "Satisfied — the Sources rendered in Test 3 were real MARA records from the live Pinecone index (citations only emitted from retrieved chunks; no-data path returns empty citations per Test 6)."
 
 ## Summary
 
 total: 8
-passed: 1
-issues: 1
-pending: 6
+passed: 8
+issues: 0
+pending: 0
 skipped: 0
 blocked: 0
+note: "Tests 1–5 + 8 browser-verified (01-07 E2E, user-approved); Tests 6–7 verified offline/transitively via pytest + live citation render. Both diagnosed gaps resolved by 01-07."
 
 ## Gaps
 
 - truth: "Asking 'bull case for MARA' in the chat returns a streaming, coherent answer in the browser"
-  status: failed
+  status: resolved
+  resolved_by: "01-07 — CRLF SSE parser fix (lib/api.ts split /\\r\\n\\r\\n|\\n\\n/ + /\\r?\\n/); vitest Tests A–D lock the regression; browser E2E re-run streams token-by-token (user-approved)."
   reason: "User reported: 'bull case for MARA' returns no response — stuck on 'Streaming response…' spinner forever, empty bubble."
   severity: blocker
   test: 2
@@ -88,7 +96,8 @@ blocked: 0
   debug_session: "Diagnosed inline in verify-work via live curl reproduction + xxd wire capture (no separate debug session file)."
 
 - truth: "Follow-up 'what about its risks?' remembers the prior ticker (MARA) — the user-story coreference outcome"
-  status: failed
+  status: resolved
+  resolved_by: "01-07 — ticker <input> wired into ChatWindow, passed as streamChat 3rd arg (ticker.trim() || undefined); backend persists ticker_scope. Browser E2E: no-ticker follow-up resolved to MARA (user-approved)."
   reason: "Discovered during diagnosis: the frontend never sends a ticker, so backend ticker_scope is never populated and coreference cannot inherit the prior ticker. Will block Test 4 once Test 2 is fixed."
   severity: major
   test: 4
