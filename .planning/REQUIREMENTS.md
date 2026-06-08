@@ -10,10 +10,11 @@ Requirements for initial release. Each maps to roadmap phases.
 
 ### Bootstrap & Contract (Phase 1)
 
-- [ ] **BOOT-01**: New `trading-chatbot/` repo exists with `backend/`, `frontend/`, `docs/`,
+- [x] **BOOT-01**: New `trading-chatbot/` repo exists with `backend/`, `frontend/`, `docs/`,
   `plan/` skeleton and a committed `docs/schema-contract.md` carrying the read-only metadata
   field table.
-- [ ] **BOOT-02**: A live-index smoke (no app code) with the read-only key opens index
+
+- [x] **BOOT-02**: A live-index smoke (no app code) with the read-only key opens index
   `trade-reports`, runs `describe_index_stats()`, and confirms namespace `trade` exists
   without errors (vector count ≥ 0 acceptable).
 
@@ -22,6 +23,7 @@ Requirements for initial release. Each maps to roadmap phases.
 - [ ] **RAG-01**: `pinecone_client` exposes `retrieve(text, ticker?, report_type?, k)`,
   `latest(ticker, report_type)`, and `timeline(ticker, limit)`, each returning normalized
   `{id, score, text, metadata}` chunks.
+
 - [ ] **RAG-02**: `/readyz` returns 200 with a real Pinecone `vector_count`; `/healthz`
   returns `{status:"ok"}`; backend `pytest` passes.
 
@@ -93,5 +95,6 @@ Production polish. Mapped to Phase 2.
 - [ ] **VERIFY-SCHEMA**: A regression test retrieves one sample chunk and asserts all required
   metadata fields (`ticker`, `report_type`, `generated_at`, `generated_date`, `source_path`)
   are present; fails loudly if any is missing. Runs in CI on every commit.
+
 - [ ] **VERIFY-NODATA**: Querying a ticker absent from the index yields a graceful "I don't
   have stored analysis for XYZ" response — no hallucinated citations.
