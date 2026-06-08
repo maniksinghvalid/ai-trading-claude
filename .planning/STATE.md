@@ -3,13 +3,13 @@ gsd_state_version: 1.0
 milestone: v1.0
 milestone_name: milestone
 status: executing
-last_updated: "2026-06-08T16:55:30.074Z"
-last_activity: 2026-06-08 -- Completed 01-01-PLAN.md (repo bootstrap + schema contract)
+last_updated: "2026-06-08T17:02:10.537Z"
+last_activity: 2026-06-08 -- Completed 01-03-PLAN.md (OpenAI LLM wrapper + RAG prompts + POST /chat + citations + no-data path)
 progress:
   total_phases: 2
   completed_phases: 0
   total_plans: 6
-  completed_plans: 2
+  completed_plans: 3
   percent: 0
 ---
 
@@ -25,11 +25,11 @@ See: .planning/PROJECT.md (updated 2026-06-08)
 ## Current Position
 
 Phase: 1 (Chatbot MVP) — EXECUTING
-Plan: 3 of 6
+Plan: 4 of 6
 Status: Ready to execute
-Last activity: 2026-06-08 -- Completed 01-01-PLAN.md (repo bootstrap + schema contract)
+Last activity: 2026-06-08 -- Completed 01-03-PLAN.md (OpenAI LLM wrapper + RAG prompts + POST /chat + citations + no-data path)
 
-Progress: [██░░░░░░░░] 17%
+Progress: [█████░░░░░] 50%
 
 ## Accumulated Context
 
@@ -49,6 +49,9 @@ Progress: [██░░░░░░░░] 17%
 - [Phase ?]: openai_model defaults to gpt-4o (current flagship)
 - [Phase ?]: retrieve() dual-filter: server-side Pinecone filter as best-effort + always post-filter returned matches (retrieval gotcha mitigation)
 - [Phase ?]: live_index pytest marker + conftest auto-skip pattern for credential-gated Pinecone tests
+- [01-03]: No-data path short-circuits before LLM call — zero chunks yields fixed graceful message, no OpenAI tokens spent
+- [01-03]: Pinecone retrieval failure degrades to no-data (graceful) rather than 503
+- [01-03]: Citations built from real chunk metadata only — partial metadata records silently dropped
 
 ### Constraints
 
@@ -68,3 +71,4 @@ yet exist in this tree — planning is grounded against `plan/trading-chatbot.md
 |-------|------|----------|-------|
 | Phase 01-chatbot-mvp P01 | 202 | 3 tasks | 10 files |
 | Phase 01-chatbot-mvp P02 | 25min | 3 tasks | 12 files |
+| Phase 01-chatbot-mvp P03 | ~3min | 3 tasks | 6 files |

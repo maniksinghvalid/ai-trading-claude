@@ -29,7 +29,7 @@ Requirements for initial release. Each maps to roadmap phases.
 
 ### Grounded Chat (Phase 1)
 
-- [ ] **CHAT-01**: `POST /chat` retrieves chunks, builds a RAG prompt, calls the LLM, and
+- [x] **CHAT-01**: `POST /chat` retrieves chunks, builds a RAG prompt, calls the LLM, and
   returns a coherent answer with a populated `citations[]` (when data exists) and a
   `session_id`; the answer ends with the educational/not-financial-advice disclaimer.
 
@@ -96,5 +96,5 @@ Production polish. Mapped to Phase 2.
   metadata fields (`ticker`, `report_type`, `generated_at`, `generated_date`, `source_path`)
   are present; fails loudly if any is missing. Runs in CI on every commit.
 
-- [ ] **VERIFY-NODATA**: Querying a ticker absent from the index yields a graceful "I don't
+- [x] **VERIFY-NODATA**: Querying a ticker absent from the index yields a graceful "I don't
   have stored analysis for XYZ" response — no hallucinated citations.
