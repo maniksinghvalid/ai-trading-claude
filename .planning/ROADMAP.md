@@ -34,7 +34,7 @@ deployment. Every slice has a runnable gate. Derived from `plan/trading-chatbot.
   3. `/readyz` returns 200 with a real Pinecone `vector_count` and backend `pytest` passes.
   4. Every chat answer ends with the educational/not-financial-advice disclaimer; an unknown ticker yields a graceful no-data response, not a hallucinated citation.
 
-**Plans**: 6 plans
+**Plans**: 6 plans + 1 gap closure
 
 Plans:
 
@@ -44,6 +44,7 @@ Plans:
 - [x] 01-04: Conversation persistence + multi-turn coreference (slice 3)
 - [x] 01-05: SSE streaming endpoint (slice 4)
 - [x] 01-06: Next.js streaming chat frontend (slice 5)
+- [ ] 01-07-PLAN.md — Gap closure: fix CRLF SSE parser (Gap 1, blocker) + wire ticker input through streamChat (Gap 2, major) + browser E2E re-verify
 
 ### Phase 2: Production Polish
 
