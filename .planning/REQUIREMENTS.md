@@ -41,7 +41,7 @@ Requirements for initial release. Each maps to roadmap phases.
 
 ### Streaming (Phase 1)
 
-- [ ] **STREAM-01**: `POST /chat/stream` emits SSE events `session` → `citations` → repeated
+- [x] **STREAM-01**: `POST /chat/stream` emits SSE events `session` → `citations` → repeated
   `token` → `done`; tokens arrive incrementally over time, not all at once.
 
 ### Frontend MVP (Phase 1)
