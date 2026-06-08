@@ -18,7 +18,8 @@
     "ui_safety_gate": false,
     "code_review_command": null,
     "plan_bounce": false,
-    "cross_ai_execution": false
+    "cross_ai_execution": false,
+    "use_worktrees": false
   },
   "planning": {
     "commit_docs": true,

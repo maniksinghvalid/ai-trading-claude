@@ -8,7 +8,7 @@
 ## Phase Boundary
 
 Phase 1 delivers a working **personal** chatbot end-to-end in the new `trading-chatbot/` repo:
-Python/FastAPI backend → Pinecone read-only retrieval → Anthropic RAG → SQLite conversation
+Python/FastAPI backend → Pinecone read-only retrieval → OpenAI RAG → SQLite conversation
 store → SSE streaming → Next.js streaming chat UI. It is single-user (no auth), uses the
 `ticker` passed explicitly by the caller (no auto-extraction yet — that is Phase 2), and reads
 from the live `trade-reports` index produced by `ai-trading-claude`.
@@ -33,13 +33,15 @@ deployment.
 
 ### Backend stack (locked)
 - Python 3.12, uv-managed venv. Deps: `fastapi>=0.115`, `uvicorn[standard]>=0.32`,
-  `pinecone>=5`, `anthropic>=0.40`, `yfinance>=0.2.40`, `pydantic>=2.9`,
-  `pydantic-settings>=2.6`, `sqlmodel>=0.0.22`, `sse-starlette>=2.1`, `httpx>=0.27`. Dev:
+  `pinecone>=5`, `openai>=1.0`, `pydantic>=2.9`, `pydantic-settings>=2.6`,
+  `sqlmodel>=0.0.22`, `psycopg[binary]>=3.2`, `sse-starlette>=2.1`, `httpx>=0.27`. Dev:
   `pytest>=8`, `pytest-asyncio>=0.24`, `respx>=0.21`.
+  (`psycopg[binary]>=3.2` is the Postgres driver — present in the stack for the Phase 2
+  Postgres migration; Phase 1 still runs on SQLite per the conversation-store decision below.)
 - `config.py`: Pydantic `Settings` with `pinecone_read_key`, `pinecone_index="trade-reports"`,
-  `pinecone_namespace="trade"`, `anthropic_api_key`, `anthropic_model` (default a current
-  Claude model — verify the exact id at plan time; the source plan's `claude-opus-4-7` may be
-  stale), `database_url="sqlite:///./chat.db"`, `cors_origins=["http://localhost:3000"]`.
+  `pinecone_namespace="trade"`, `openai_api_key`, `openai_model` (default a current
+  OpenAI model — verify the exact id at plan time), `database_url="sqlite:///./chat.db"`,
+  `cors_origins=["http://localhost:3000"]`.
 
 ### Upstream contract (read-only — do NOT redefine, consume as-is)
 - Index `trade-reports`, namespace `trade`, embedding `llama-text-embed-v2`, cloud
@@ -68,7 +70,7 @@ deployment.
   prefixed with source marker + ticker + type + signal + score) and a "# Question" block.
   Truncate each chunk's text to ~1000 chars; default response `max_tokens=2048`.
 - `llm_client.complete(system, messages)` non-streaming first; `stream_complete` generator
-  added in slice 4. Provider-agnostic wrapper — Anthropic is the only call site.
+  added in slice 4. Provider-agnostic wrapper — OpenAI is the only call site.
 
 ### API schemas (locked, shared backend↔frontend)
 - `ChatRequest{message, ticker?, session_id?}`, `Citation{source_path, generated_date, ticker,
@@ -89,7 +91,7 @@ deployment.
 
 ### Frontend MVP (locked)
 - Next.js 14 App Router + TypeScript + Tailwind, `--no-src-dir`. `npm install ai
-  @ai-sdk/anthropic eventsource-parser react-markdown`.
+  @ai-sdk/openai eventsource-parser react-markdown`.
 - `lib/api.ts`: async generator `streamChat(message, sessionId?, ticker?)` POSTing to backend
   `/chat/stream`, splitting on `\n\n`, yielding `{event, data}`.
 - `components/ChatWindow.tsx` ("use client"): state messages/input/sessionId/streaming;
@@ -98,11 +100,12 @@ deployment.
   `app/page.tsx` server component renders `<ChatWindow/>`.
 
 ### Claude's Discretion
-- Exact `anthropic_model` id (use a current Claude model; confirm — see claude-api skill).
+- Exact `openai_model` id (use a current OpenAI model, e.g. a current `gpt-4o`/`gpt-4.1`-class
+  model; confirm the exact id at implementation time).
 - Internal test structure, fixtures, and whether Pinecone smokes hit the live index vs. mock
   (the source plan uses live-index smokes for slices 0–1; respect that but keep them
   skippable when the key is absent).
-- Error-handling shape for Pinecone/Anthropic outages (graceful "memory unavailable" /
+- Error-handling shape for Pinecone/OpenAI outages (graceful "memory unavailable" /
   "LLM provider unavailable" — the source plan's Risks section is the guide).
 </decisions>
 

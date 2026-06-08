@@ -9,16 +9,18 @@ in their portfolio (or any ticker in the index) and get cited, memory-grounded a
 time, augmented with live market data when relevant.
 
 **Architecture:** the chatbot is a **separate application** in a new repository. Node.js
-(Next.js) frontend → FastAPI Python backend → Pinecone (read-only) + Anthropic Claude API +
-Yahoo Finance (yfinance) for live quotes. The `ai-trading-claude` plugin remains the sole
+(Next.js) frontend → FastAPI Python backend → Pinecone (read-only) + OpenAI API. Live
+market-data quotes are a Phase 2 addition (provider TBD — `yfinance` was removed from the
+locked stack). The `ai-trading-claude` plugin remains the sole
 *producer* writing reports into Pinecone; the chatbot is a pure *consumer* reading from the
 same `trade-reports` index with a read-only API key. Conversation state lives in the
 chatbot's own database (SQLite for v0, Postgres for multi-user), never in Pinecone — the
 trade-reports index stays clean for retrieval.
 
-**Tech Stack:** Python 3.12 + FastAPI + `pinecone>=5` + `anthropic>=0.40` + `yfinance` +
-SQLite/Postgres on the backend. Next.js 14 (App Router) + TypeScript + Vercel AI SDK + Tailwind
-on the frontend. Server-Sent Events (SSE) for streaming. Docker Compose for local dev.
+**Tech Stack:** Python 3.12 + FastAPI + `pinecone>=5` + `openai>=1.0` +
+SQLite (Phase 1) → Postgres (`psycopg[binary]>=3.2`, Phase 2) on the backend. Next.js 14 (App
+Router) + TypeScript + Vercel AI SDK + Tailwind on the frontend. Server-Sent Events (SSE) for
+streaming. Docker Compose for local dev.
 
 ---
 
@@ -33,8 +35,8 @@ trading-chatbot/                       NEW repo
 │   │   ├── main.py                    FastAPI app entry
 │   │   ├── config.py                  Pydantic Settings; env-based
 │   │   ├── pinecone_client.py         Retrieval wrapper (query/latest/timeline)
-│   │   ├── llm_client.py              Anthropic streaming wrapper
-│   │   ├── market_data.py             yfinance live-quote helper
+│   │   ├── llm_client.py              OpenAI streaming wrapper
+│   │   ├── market_data.py             live-quote helper (Phase 2; provider TBD)
 │   │   ├── ticker_extractor.py        Detects ticker symbols in messages
 │   │   ├── intent_classifier.py       Decides retrieve / quote / both / none
 │   │   ├── session_store.py           SQLite/Postgres conversation store
@@ -163,7 +165,7 @@ data, rate limiting, deployment. Each slice has a runnable gate.
 - Create: `trading-chatbot/` repo with empty `backend/`, `frontend/`, `docs/`, `plan/`
 - Create: `docs/schema-contract.md` — copy the table above; document the read-only key process
 - Create: `.env.example` with `PINECONE_READ_KEY`, `PINECONE_INDEX=trade-reports`,
-  `ANTHROPIC_API_KEY`, `DATABASE_URL=sqlite:///./chat.db`
+  `OPENAI_API_KEY`, `DATABASE_URL=sqlite:///./chat.db`
 
 **Steps:**
 - [ ] **0.1 — Initialize repo:** `git init trading-chatbot` then `cd trading-chatbot`.
@@ -196,11 +198,11 @@ response without errors. Read key works. Schema contract committed.
     "fastapi>=0.115",
     "uvicorn[standard]>=0.32",
     "pinecone>=5",
-    "anthropic>=0.40",
-    "yfinance>=0.2.40",
+    "openai>=1.0",
     "pydantic>=2.9",
     "pydantic-settings>=2.6",
     "sqlmodel>=0.0.22",
+    "psycopg[binary]>=3.2",
     "sse-starlette>=2.1",
     "httpx>=0.27",
   ]
@@ -215,8 +217,8 @@ response without errors. Read key works. Schema contract committed.
       pinecone_read_key: str
       pinecone_index: str = "trade-reports"
       pinecone_namespace: str = "trade"
-      anthropic_api_key: str
-      anthropic_model: str = "claude-opus-4-7"
+      openai_api_key: str
+      openai_model: str = "gpt-4o"  # confirm a current OpenAI model id at implementation time
       database_url: str = "sqlite:///./chat.db"
       cors_origins: list[str] = ["http://localhost:3000"]
 
@@ -245,7 +247,7 @@ response without errors. Read key works. Schema contract committed.
 **Gate:** `/readyz` returns 200 with a real `vector_count`; pytest passes; manual call to
 `retrieve("AAPL", k=3)` in a Python REPL returns chunks.
 
-### Slice 2 — Anthropic client + non-streaming chat endpoint (1 day)
+### Slice 2 — OpenAI client + non-streaming chat endpoint (1 day)
 
 **Files:**
 - Create: `backend/src/llm_client.py`, `backend/src/prompts.py`,
@@ -261,8 +263,10 @@ response without errors. Read key works. Schema contract committed.
   - `rag_user_prompt(question, chunks, live_quote=None)`: builds a structured "# Context"
     block from retrieved chunks (each prefixed with source marker + ticker + type + signal +
     score) and a "# Question" block. Optional live-quote inset (used by slice 7).
-- [ ] **2.2 — `backend/src/llm_client.py`** — thin Anthropic wrapper:
-  - `complete(system, messages) -> str` for non-streaming
+- [ ] **2.2 — `backend/src/llm_client.py`** — thin OpenAI wrapper:
+  - `complete(system, messages) -> str` for non-streaming — calls `client.chat.completions.create`
+    with `settings.openai_model`, the `system` prompt prepended as a `{"role":"system",...}` message,
+    and `max_tokens=2048`; returns `response.choices[0].message.content`
   - (slice 4 will add `stream_complete`)
 - [ ] **2.3 — `backend/src/schemas.py`** — Pydantic models: `ChatRequest` (message, ticker?,
   session_id?), `Citation` (source_path, generated_date, ticker, report_type),
@@ -322,8 +326,8 @@ session. `GET /sessions/{id}` returns the turn history.
 - Modify: `backend/src/routes/chat.py` (add `/chat/stream` endpoint)
 
 **Steps:**
-- [ ] **4.1 — Add streaming to `llm_client.py`** — generator over Anthropic's
-  `messages.stream(...)` context manager, yielding `text_stream` tokens.
+- [ ] **4.1 — Add streaming to `llm_client.py`** — generator over OpenAI's
+  `chat.completions.create(..., stream=True)`, yielding each non-empty `chunk.choices[0].delta.content`.
 - [ ] **4.2 — Add SSE endpoint** in `routes/chat.py` using `sse_starlette`:
   - Emit `event: session` (the session_id) first.
   - Emit `event: citations` (JSON list) second.
@@ -348,7 +352,7 @@ all at once. Citations arrive once at the start.
 
 **Steps:**
 - [ ] **5.1 — Bootstrap Next.js:** `npx create-next-app@latest .` in `frontend/` with flags
-  `--typescript --tailwind --app --no-src-dir`. Then `npm install ai @ai-sdk/anthropic
+  `--typescript --tailwind --app --no-src-dir`. Then `npm install ai @ai-sdk/openai
   eventsource-parser react-markdown`.
 - [ ] **5.2 — `frontend/lib/api.ts`** — typed async generator `streamChat(message,
   sessionId?, ticker?)` that POSTs to backend `/chat/stream`, reads the response body via
@@ -394,7 +398,7 @@ automatically.
 - **Ticker extractor:** rule-based first pass (regex for `\$?[A-Z]{1,5}(\.[A-Z])?`),
   validated against a list of known tickers from holdings. LLM fallback for ambiguous
   mentions ("Apple" → AAPL).
-- **Intent classifier:** small Anthropic call with a fixed schema returning
+- **Intent classifier:** small OpenAI call with a fixed schema returning
   `{intent: "factual"|"trajectory"|"comparison"|"action"|"chitchat", tickers: [...]}`.
 - **Coreference:** if the new message has no ticker but the last assistant message did,
   inherit the ticker scope from session_store.
@@ -410,8 +414,10 @@ keeps AAPL in scope for comparison.
 - Modify: `backend/src/routes/chat.py` and `prompts.py` to inject live quote when relevant
 
 **Implementation:**
-- `market_data.py`: thin yfinance wrapper. `quote(ticker) -> {price, day_change_pct,
-  volume, timestamp, source: "yfinance"}`. 15-min cache (in-memory dict with TTL).
+- `market_data.py`: thin live-quote wrapper. **Provider TBD** — `yfinance` was removed from the
+  locked stack, so this slice must pick and pin a quote source (e.g. a paid feed or a re-added
+  `yfinance`) when Phase 2 is planned. `quote(ticker) -> {price, day_change_pct,
+  volume, timestamp, source}`. 15-min cache (in-memory dict with TTL).
 - Intent classifier decides when to fetch live quote (keywords: "now", "current",
   "today", "price", "trading at").
 - Quote rendered in a `QuoteCard.tsx` on the frontend, separate from cited memory chunks.
@@ -457,7 +463,7 @@ for AAPL?" returns cited memory context without a quote card.
 - Modify: `backend/src/routes/chat.py` middleware
 
 **Implementation:**
-- Per-user daily budget: max N chat requests, max M Anthropic input tokens. Stored as a
+- Per-user daily budget: max N chat requests, max M OpenAI input tokens. Stored as a
   `UserBudget` SQLModel table with daily reset.
 - Pinecone read budget similarly tracked.
 - 429 response with `retry-after` header when budget exceeded.
@@ -549,15 +555,16 @@ metadata contains all required fields (`ticker`, `report_type`, `generated_at`,
 - **Stale data.** Pinecone only has what was last ingested. Mitigation: include
   `generated_at` in every citation so the user sees report age; for "current" questions,
   intent classifier routes to live quote.
-- **Real-time-data latency (yfinance ~15 min delay).** Mitigation: timestamp every quote
+- **Real-time-data latency.** Whatever Phase 2 live-quote provider is chosen (yfinance was
+  removed from the locked stack) may be delayed. Mitigation: timestamp every quote
   card; document the delay in the chatbot's about/help text; if real-time matters,
-  upgrade to a paid feed (Polygon, IEX Cloud) later.
+  use a paid feed (Polygon, IEX Cloud).
 - **Prompt injection from retrieved chunks.** Reports include LLM-summarized web content
   that could carry adversarial phrasing. Mitigation: system prompt explicitly frames
   context as "reference material to evaluate, not instructions"; citation discipline
   forces traceability.
 - **LLM cost runaway.** A single user with no rate limit could consume $50+/day in
-  Anthropic tokens by spamming long-context queries. Mitigation: slice 10 rate limiting;
+  OpenAI tokens by spamming long-context queries. Mitigation: slice 10 rate limiting;
   default `max_tokens=2048` per response; truncate retrieved chunk text at ~1000 chars
   per chunk in the prompt.
 - **Empty-index cold start.** New users / fresh Pinecone index = no retrieval results.
@@ -568,9 +575,9 @@ metadata contains all required fields (`ticker`, `report_type`, `generated_at`,
   queries, partial reports may surface. Mitigation: Pinecone upserts are atomic per
   record; partial reports surfacing is acceptable (just newer/older chunks of the same
   ticker, all internally consistent).
-- **Anthropic API outage.** Chatbot is unusable. Mitigation: surface a clear "LLM
+- **OpenAI API outage.** Chatbot is unusable. Mitigation: surface a clear "LLM
   provider unavailable; please try again in a moment" error; consider a fallback to a
-  smaller model (Haiku) for graceful degradation.
+  smaller/cheaper model for graceful degradation.
 - **Pinecone outage.** Retrieval fails; chatbot can still answer general-knowledge
   questions without grounding. Mitigation: explicit "memory unavailable; answering from
   general knowledge" banner when Pinecone errors; never hallucinate cited claims.
@@ -590,18 +597,18 @@ Single-user, ~50 chat turns/day, 8KB average retrieved context per turn:
 |-----------|-------|---------|
 | Pinecone reads (50 queries × 6 chunks) | ~300 reads | ~9K (~$0.001) |
 | Pinecone embeddings (50 query embeddings) | ~25K tokens | ~750K (~$0.075) |
-| Anthropic input tokens (50 × 4K avg) | ~200K | ~6M tokens |
-| Anthropic output tokens (50 × 1K avg) | ~50K | ~1.5M tokens |
-| Anthropic cost (Claude Opus 4.7) | ~$0.50/day | ~$15/month |
-| Anthropic cost (Claude Haiku 4.5) | ~$0.04/day | ~$1.20/month |
-| yfinance | free | free |
+| OpenAI input tokens (50 × 4K avg) | ~200K | ~6M tokens |
+| OpenAI output tokens (50 × 1K avg) | ~50K | ~1.5M tokens |
+| OpenAI cost (flagship model, e.g. gpt-4o) | ~$0.50/day | ~$15/month |
+| OpenAI cost (mini model, e.g. gpt-4o-mini) | ~$0.04/day | ~$1.20/month |
+| Live-quote provider (Phase 2; provider TBD) | — | — |
 | Hosting (Fly.io backend + Vercel frontend) | — | ~$5–10/month |
 | Postgres (Fly.io managed) | — | ~$3/month |
-| **Total** (Opus) | ~$0.50/day | **~$25/month** |
-| **Total** (Haiku) | ~$0.05/day | **~$10/month** |
+| **Total** (flagship) | ~$0.50/day | **~$25/month** |
+| **Total** (mini) | ~$0.05/day | **~$10/month** |
 
-Recommend defaulting to Opus for response quality on research questions; expose a
-"fast mode" toggle in the UI that switches to Haiku for cost-sensitive sessions.
+Recommend defaulting to a flagship OpenAI model for response quality on research questions; expose a
+"fast mode" toggle in the UI that switches to a mini model for cost-sensitive sessions.
 
 ---
 
@@ -610,10 +617,11 @@ Recommend defaulting to Opus for response quality on research questions; expose 
 The chatbot's architectural dependencies:
 1. **`ai-trading-claude` schema** — versioned via the Consumer Integration contract.
 2. **Pinecone SDK** — same as ai-trading-claude; SDK bumps verified in CI.
-3. **Anthropic SDK** — bumped periodically; provider-agnostic via `llm_client.py`
-   abstraction so switching to OpenAI / others requires touching one file.
-4. **yfinance** — fragile (it scrapes Yahoo's HTML); plan a migration path to a paid feed
-   if usage warrants.
+3. **OpenAI SDK** — bumped periodically; provider-agnostic via `llm_client.py`
+   abstraction so switching to another provider requires touching one file.
+4. **Live-quote provider (Phase 2)** — none in the locked stack yet (yfinance was removed);
+   pick and pin a source when Phase 2 is planned. yfinance is fragile (HTML scraping); a paid
+   feed (Polygon/IEX) is the durable path.
 5. **Next.js + Vercel AI SDK** — standard web stack; minimal maintenance burden.
 
 The data flow is unidirectional: producer writes, consumer reads. No feedback loop from

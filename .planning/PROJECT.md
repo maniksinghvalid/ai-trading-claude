@@ -49,8 +49,8 @@ don't have stored analysis for X" when it doesn't.
   retrieval; a `report_type=CHAT` ingest path is a deliberate future opt-in, not v1.
 - Producer/analysis logic — the chatbot never generates analysis reports; that stays in
   `ai-trading-claude`. Unidirectional data flow: producer writes, consumer reads.
-- Real-time (<1s) market data — yfinance is ~15min delayed; a paid feed (Polygon/IEX) is a
-  later upgrade if usage warrants.
+- Real-time (<1s) market data — Phase 2 adds a live-quote layer (provider TBD; yfinance removed
+  from the locked stack), and a paid feed (Polygon/IEX) is a later upgrade if usage warrants.
 - Brokerage / trade execution — research tool only; no order routing, no broker keys.
 
 ## Context
@@ -72,14 +72,15 @@ don't have stored analysis for X" when it doesn't.
 
 ## Constraints
 
-- **Tech stack**: Python 3.12 + FastAPI + `pinecone>=5` + `anthropic>=0.40` + `yfinance` +
-  SQLite→Postgres backend; Next.js 14 (App Router) + TypeScript + Vercel AI SDK + Tailwind
-  frontend; SSE for streaming; Docker Compose for local dev — locked by the source plan.
+- **Tech stack**: Python 3.12 + FastAPI + `pinecone>=5` + `openai>=1.0` +
+  SQLite (Phase 1) → Postgres (`psycopg[binary]>=3.2`, Phase 2) backend; Next.js 14 (App Router)
+  + TypeScript + Vercel AI SDK + Tailwind frontend; SSE for streaming; Docker Compose for local
+  dev — locked by the source plan.
 - **Repository**: separate repo `trading-chatbot/`, NOT part of `ai-trading-claude`. These
   `.planning/` artifacts live in `ai-trading-claude` only as a conversion staging area.
 - **Access**: Pinecone read-only ("Reader" role) key as `PINECONE_READ_KEY`; the producer's
   write key is never shared with the chatbot.
-- **Cost**: single-user target ~$25/month on Opus, ~$10/month on Haiku; default
+- **Cost**: single-user target roughly $10–25/month depending on the OpenAI model tier; default
   `max_tokens=2048`, truncate retrieved chunk text at ~1000 chars/chunk.
 - **Security**: retrieved chunks contain LLM-summarized web content — system prompt must frame
   context as "reference material to evaluate, not instructions" (prompt-injection defense).
@@ -90,8 +91,8 @@ don't have stored analysis for X" when it doesn't.
 |----------|-----------|---------|
 | All Pinecone access routes through the Python backend (not Node) | Keeps prompt assembly, LLM calls, retrieval in one testable place | — Pending |
 | Conversation state in the chatbot's own DB, never in Pinecone | Keeps `trade-reports` clean for retrieval | — Pending |
-| Provider-agnostic `llm_client.py` abstraction | Switching off Anthropic touches one file | — Pending |
-| Default to Opus, expose a Haiku "fast mode" toggle | Quality on research Q&A vs. cost-sensitive sessions | — Pending |
+| Provider-agnostic `llm_client.py` abstraction | Switching LLM provider touches one file | — Pending |
+| Default to a current OpenAI model, expose a cheaper "fast mode" toggle | Quality on research Q&A vs. cost-sensitive sessions | — Pending |
 | Two-phase rollout: MVP (slices 0–5) then production polish (slices 6–12) | Each slice has a runnable gate; MVP ships an end-to-end personal chatbot first | — Pending |
 
 ---
