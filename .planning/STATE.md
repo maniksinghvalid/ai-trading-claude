@@ -3,14 +3,14 @@ gsd_state_version: 1.0
 milestone: v1.0
 milestone_name: milestone
 status: executing
-last_updated: "2026-06-08T16:47:35.394Z"
+last_updated: "2026-06-08T16:55:30.074Z"
 last_activity: 2026-06-08 -- Completed 01-01-PLAN.md (repo bootstrap + schema contract)
 progress:
   total_phases: 2
   completed_phases: 0
   total_plans: 6
-  completed_plans: 1
-  percent: 17
+  completed_plans: 2
+  percent: 0
 ---
 
 # Project State
@@ -25,7 +25,7 @@ See: .planning/PROJECT.md (updated 2026-06-08)
 ## Current Position
 
 Phase: 1 (Chatbot MVP) — EXECUTING
-Plan: 2 of 6
+Plan: 3 of 6
 Status: Ready to execute
 Last activity: 2026-06-08 -- Completed 01-01-PLAN.md (repo bootstrap + schema contract)
 
@@ -46,6 +46,9 @@ Progress: [██░░░░░░░░] 17%
 
 - [Phase ?]: trading-chatbot/ initialized as a nested git repo; outer repo does not git-track it (no gitlink)
 - [Phase ?]: smoke_index.py exits 0 on missing PINECONE_READ_KEY — safe to run in CI without credentials
+- [Phase ?]: openai_model defaults to gpt-4o (current flagship)
+- [Phase ?]: retrieve() dual-filter: server-side Pinecone filter as best-effort + always post-filter returned matches (retrieval gotcha mitigation)
+- [Phase ?]: live_index pytest marker + conftest auto-skip pattern for credential-gated Pinecone tests
 
 ### Constraints
 
@@ -64,3 +67,4 @@ yet exist in this tree — planning is grounded against `plan/trading-chatbot.md
 | Phase | Plan | Duration | Notes |
 |-------|------|----------|-------|
 | Phase 01-chatbot-mvp P01 | 202 | 3 tasks | 10 files |
+| Phase 01-chatbot-mvp P02 | 25min | 3 tasks | 12 files |

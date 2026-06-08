@@ -20,11 +20,11 @@ Requirements for initial release. Each maps to roadmap phases.
 
 ### Retrieval Backend (Phase 1)
 
-- [ ] **RAG-01**: `pinecone_client` exposes `retrieve(text, ticker?, report_type?, k)`,
+- [x] **RAG-01**: `pinecone_client` exposes `retrieve(text, ticker?, report_type?, k)`,
   `latest(ticker, report_type)`, and `timeline(ticker, limit)`, each returning normalized
   `{id, score, text, metadata}` chunks.
 
-- [ ] **RAG-02**: `/readyz` returns 200 with a real Pinecone `vector_count`; `/healthz`
+- [x] **RAG-02**: `/readyz` returns 200 with a real Pinecone `vector_count`; `/healthz`
   returns `{status:"ok"}`; backend `pytest` passes.
 
 ### Grounded Chat (Phase 1)
