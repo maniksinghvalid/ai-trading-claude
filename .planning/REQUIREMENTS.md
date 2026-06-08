@@ -35,7 +35,7 @@ Requirements for initial release. Each maps to roadmap phases.
 
 ### Conversation State (Phase 1)
 
-- [ ] **CONV-01**: Two consecutive messages with the same `session_id` produce a response that
+- [x] **CONV-01**: Two consecutive messages with the same `session_id` produce a response that
   references the prior turn's ticker without restating it; `GET /sessions` lists sessions and
   `GET /sessions/{id}` returns turn history.
 

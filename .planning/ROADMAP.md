@@ -41,7 +41,7 @@ Plans:
 - [x] 01-01: Repo bootstrap + schema-contract doc + live-index smoke (slice 0)
 - [x] 01-02: Backend skeleton + Pinecone client + health/ready (slice 1)
 - [x] 01-03: OpenAI client + non-streaming RAG chat endpoint (slice 2)
-- [ ] 01-04: Conversation persistence + multi-turn coreference (slice 3)
+- [x] 01-04: Conversation persistence + multi-turn coreference (slice 3)
 - [ ] 01-05: SSE streaming endpoint (slice 4)
 - [ ] 01-06: Next.js streaming chat frontend (slice 5)
 
@@ -77,5 +77,5 @@ Phases execute in numeric order: 1 → 2
 
 | Phase | Plans Complete | Status | Completed |
 |-------|----------------|--------|-----------|
-| 1. Chatbot MVP | 3/6 | In Progress|  |
+| 1. Chatbot MVP | 4/6 | In Progress|  |
 | 2. Production Polish | 0/7 | Not started | - |

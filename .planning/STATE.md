@@ -3,13 +3,13 @@ gsd_state_version: 1.0
 milestone: v1.0
 milestone_name: milestone
 status: executing
-last_updated: "2026-06-08T17:02:10.537Z"
-last_activity: 2026-06-08 -- Completed 01-03-PLAN.md (OpenAI LLM wrapper + RAG prompts + POST /chat + citations + no-data path)
+last_updated: "2026-06-08T17:08:55.855Z"
+last_activity: 2026-06-08 -- Completed 01-04-PLAN.md (SQLite conversation store + multi-turn coreference + /sessions endpoints)
 progress:
   total_phases: 2
   completed_phases: 0
   total_plans: 6
-  completed_plans: 3
+  completed_plans: 4
   percent: 0
 ---
 
@@ -25,11 +25,11 @@ See: .planning/PROJECT.md (updated 2026-06-08)
 ## Current Position
 
 Phase: 1 (Chatbot MVP) — EXECUTING
-Plan: 4 of 6
+Plan: 5 of 6
 Status: Ready to execute
-Last activity: 2026-06-08 -- Completed 01-03-PLAN.md (OpenAI LLM wrapper + RAG prompts + POST /chat + citations + no-data path)
+Last activity: 2026-06-08 -- Completed 01-04-PLAN.md (SQLite conversation store + multi-turn coreference + /sessions endpoints)
 
-Progress: [█████░░░░░] 50%
+Progress: [███████░░░] 67%
 
 ## Accumulated Context
 
@@ -52,6 +52,8 @@ Progress: [█████░░░░░] 50%
 - [01-03]: No-data path short-circuits before LLM call — zero chunks yields fixed graceful message, no OpenAI tokens spent
 - [01-03]: Pinecone retrieval failure degrades to no-data (graceful) rather than 503
 - [01-03]: Citations built from real chunk metadata only — partial metadata records silently dropped
+- [01-04]: Coreference via stored ticker_scope — req.ticker=None inherits most recent non-null ticker_scope from history, no LLM call needed (Phase 2 slice 6 adds full extraction)
+- [01-04]: No-data path also persists both turns so follow-up turns have complete prior context
 
 ### Constraints
 
@@ -72,3 +74,4 @@ yet exist in this tree — planning is grounded against `plan/trading-chatbot.md
 | Phase 01-chatbot-mvp P01 | 202 | 3 tasks | 10 files |
 | Phase 01-chatbot-mvp P02 | 25min | 3 tasks | 12 files |
 | Phase 01-chatbot-mvp P03 | ~3min | 3 tasks | 6 files |
+| Phase 01-chatbot-mvp P04 | ~15min | 2 tasks | 5 files |
