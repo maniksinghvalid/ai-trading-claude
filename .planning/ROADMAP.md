@@ -44,7 +44,7 @@ Plans:
 - [x] 01-04: Conversation persistence + multi-turn coreference (slice 3)
 - [x] 01-05: SSE streaming endpoint (slice 4)
 - [x] 01-06: Next.js streaming chat frontend (slice 5)
-- [ ] 01-07-PLAN.md — Gap closure: fix CRLF SSE parser (Gap 1, blocker) + wire ticker input through streamChat (Gap 2, major) + browser E2E re-verify
+- [x] 01-07: Gap closure — fix CRLF SSE parser (Gap 1, blocker) + wire ticker input through streamChat (Gap 2, major) + browser E2E re-verify (completed 2026-06-08)
 
 ### Phase 2: Production Polish
 
@@ -78,5 +78,5 @@ Phases execute in numeric order: 1 → 2
 
 | Phase | Plans Complete | Status | Completed |
 |-------|----------------|--------|-----------|
-| 1. Chatbot MVP | 6/6 | Complete   | 2026-06-08 |
+| 1. Chatbot MVP | 7/7 | Complete   | 2026-06-08 |
 | 2. Production Polish | 0/7 | Not started | - |
