@@ -1,8 +1,9 @@
 ---
 phase: 01-chatbot-mvp
 verified: 2026-06-08T11:45:00Z
-status: human_needed
-score: 3/4 success criteria verified (1 code-complete, pending live run)
+status: passed
+reverified: 2026-06-08T22:10:00Z
+score: 4/4 success criteria verified (human items closed via gap-closure 01-07 browser E2E)
 overrides_applied: 0
 human_verification:
   - test: "Browser streaming + Sources render (SC-1)"
@@ -24,9 +25,31 @@ human_verification:
 **Phase Goal:** As a trader, I want to chat about my holdings and ask follow-up questions
 that remember the prior ticker, so that I can trust the answer and verify it against the
 cited source reports.
-**Verified:** 2026-06-08T11:45:00Z
-**Status:** human_needed
-**Re-verification:** No — initial verification
+**Verified:** 2026-06-08T11:45:00Z (initial) · **Re-verified:** 2026-06-08T22:10:00Z (post gap-closure)
+**Status:** passed
+**Re-verification:** Yes — human items closed by gap-closure plan 01-07
+
+---
+
+## Re-verification Addendum (2026-06-08, post gap-closure 01-07)
+
+The initial verification was `human_needed` on four live/browser items. The UAT
+(`01-UAT.md`) then found two frontend gaps that **would have failed** SC-1/SC-2 in the
+browser (CRLF SSE parse blocker + missing ticker wiring). Gap-closure plan **01-07**
+fixed both and re-ran the real browser E2E, which the user **approved**:
+
+- **SC-1 — Browser streaming + Sources:** ✅ "bull case for MARA" streamed token-by-token
+  (no infinite spinner) with a Sources list of real MARA citations. Closed by the CRLF
+  parser fix (`lib/api.ts` split `/\r\n\r\n|\n\n/` + `/\r?\n/`), locked by vitest Tests A–D.
+- **SC-2 — Follow-up coreference:** ✅ same-session "what about its risks?" resolved to MARA
+  without restating the ticker. Closed by wiring the ticker into `streamChat` (Gap 2).
+- **SC-3 — `/readyz` real vector_count:** ✅ satisfied transitively — the browser flow
+  rendered **real** MARA citations, which requires live Pinecone retrieval (vector_count > 0);
+  backend boot confirmed in `01-UAT.md` Test 1.
+- **SC-4 — Disclaimer on every answer:** ✅ both browser answers ended with the
+  educational / not-financial-advice disclaimer (01-07 checkpoint step 5).
+
+All four success criteria are now demonstrably TRUE in a live browser. Status → **passed**.
 
 ---
 
