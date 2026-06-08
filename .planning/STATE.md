@@ -2,15 +2,15 @@
 gsd_state_version: 1.0
 milestone: v1.0
 milestone_name: milestone
-status: executing
-last_updated: "2026-06-08T17:18:44.787Z"
-last_activity: 2026-06-08 -- Completed 01-04-PLAN.md (SQLite conversation store + multi-turn coreference + /sessions endpoints)
+status: verifying
+last_updated: "2026-06-08T17:27:12.833Z"
+last_activity: "2026-06-08 -- Completed 01-05-PLAN.md (SSE streaming: stream_complete + POST /chat/stream)"
 progress:
   total_phases: 2
-  completed_phases: 0
+  completed_phases: 1
   total_plans: 6
-  completed_plans: 5
-  percent: 0
+  completed_plans: 6
+  percent: 50
 ---
 
 # Project State
@@ -26,7 +26,7 @@ See: .planning/PROJECT.md (updated 2026-06-08)
 
 Phase: 1 (Chatbot MVP) — EXECUTING
 Plan: 6 of 6
-Status: Ready to execute
+Status: Phase complete — ready for verification
 Last activity: 2026-06-08 -- Completed 01-05-PLAN.md (SSE streaming: stream_complete + POST /chat/stream)
 
 Progress: [████████░░] 83%
@@ -56,6 +56,9 @@ Progress: [████████░░] 83%
 - [01-04]: No-data path also persists both turns so follow-up turns have complete prior context
 - [01-05]: Temp-file SQLite in streaming tests — SQLite :memory: is connection-scoped; sse_starlette ASGI runner opens new connections in worker threads that see empty DBs
 - [01-05]: Sync generator for stream_complete — OpenAI streaming SDK is synchronous; consumed inline in async event generator
+- [Phase ?]: Native fetch + ReadableStream for SSE (POST /chat/stream — EventSource is GET-only)
+- [Phase ?]: ReactMarkdown without rehype-raw: XSS defense T-06-01 for LLM output in chat UI
+- [Phase ?]: sessionId in React state: Phase 1 single-user MVP; cross-reload persistence deferred to Phase 2
 
 ### Constraints
 
@@ -78,3 +81,4 @@ yet exist in this tree — planning is grounded against `plan/trading-chatbot.md
 | Phase 01-chatbot-mvp P03 | ~3min | 3 tasks | 6 files |
 | Phase 01-chatbot-mvp P04 | ~15min | 2 tasks | 5 files |
 | Phase 01-chatbot-mvp P05 | 20min | 2 tasks | 3 files |
+| Phase 01-chatbot-mvp P06 | 20min | - tasks | - files |

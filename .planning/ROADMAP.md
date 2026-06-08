@@ -16,7 +16,7 @@ deployment. Every slice has a runnable gate. Derived from `plan/trading-chatbot.
 - Integer phases (1, 2): Planned milestone work
 - Decimal phases (2.1, 2.2): Urgent insertions (marked with INSERTED)
 
-- [ ] **Phase 1: Chatbot MVP** - Backend + Pinecone RAG + streaming + Next.js chat, end-to-end
+- [x] **Phase 1: Chatbot MVP** - Backend + Pinecone RAG + streaming + Next.js chat, end-to-end (completed 2026-06-08)
 - [ ] **Phase 2: Production Polish** - Ticker/intent, live quotes, auth, Postgres, rate limits, deploy
 
 ## Phase Details
@@ -43,7 +43,7 @@ Plans:
 - [x] 01-03: OpenAI client + non-streaming RAG chat endpoint (slice 2)
 - [x] 01-04: Conversation persistence + multi-turn coreference (slice 3)
 - [x] 01-05: SSE streaming endpoint (slice 4)
-- [ ] 01-06: Next.js streaming chat frontend (slice 5)
+- [x] 01-06: Next.js streaming chat frontend (slice 5)
 
 ### Phase 2: Production Polish
 
@@ -77,5 +77,5 @@ Phases execute in numeric order: 1 → 2
 
 | Phase | Plans Complete | Status | Completed |
 |-------|----------------|--------|-----------|
-| 1. Chatbot MVP | 5/6 | In Progress|  |
+| 1. Chatbot MVP | 6/6 | Complete   | 2026-06-08 |
 | 2. Production Polish | 0/7 | Not started | - |

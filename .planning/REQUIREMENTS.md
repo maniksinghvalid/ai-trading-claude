@@ -46,7 +46,7 @@ Requirements for initial release. Each maps to roadmap phases.
 
 ### Frontend MVP (Phase 1)
 
-- [ ] **UI-01**: The Next.js chat UI streams an assistant response token-by-token, renders a
+- [x] **UI-01**: The Next.js chat UI streams an assistant response token-by-token, renders a
   Sources list under the bubble from citations, and continues a session across messages.
 
 ## v2 Requirements
