@@ -3,13 +3,13 @@ gsd_state_version: 1.0
 milestone: v1.0
 milestone_name: milestone
 status: executing
-last_updated: "2026-06-09T07:45:34.576Z"
-last_activity: 2026-06-09 -- Phase 02 execution started
+last_updated: "2026-06-09T14:52:18.754Z"
+last_activity: 2026-06-09 -- 02-02 completed (live quote layer: market_data.py + quote endpoint + intent-gated injection)
 progress:
   total_phases: 2
   completed_phases: 1
   total_plans: 14
-  completed_plans: 7
+  completed_plans: 9
   percent: 50
 ---
 
@@ -25,11 +25,11 @@ See: .planning/PROJECT.md (updated 2026-06-08)
 ## Current Position
 
 Phase: 02 (production-polish) — EXECUTING
-Plan: 2 of 7
-Status: Executing Phase 02
+Plan: 3 of 7
+Status: Ready to execute
 Last activity: 2026-06-09 -- 02-01 completed (ticker extractor + intent classifier + schema regression test)
 
-Progress: [██████████] 100% (Phase 1) · 50% (milestone, 1/2 phases) · 02-01 complete (1/7 Phase 2 plans)
+Progress: [██████████] 100% (Phase 1) · 64% (milestone, 9/14 plans) · 02-02 complete (2/7 Phase 2 plans)
 
 ## Accumulated Context
 
@@ -59,6 +59,10 @@ Progress: [██████████] 100% (Phase 1) · 50% (milestone, 1/2
 - [02-01]: classify_intent degrades to factual + regex tickers on any LLM failure
 - [02-01]: intent result stored in local var for slice 7; no live-quote logic added yet
 - [02-01]: autouse pytest fixture pattern for offline stubs avoids modifying every existing test
+- [02-02]: yfinance 1.4.1 pinned via uv add; _fetch_raw() factored as monkeypatch target so all tests run offline
+- [02-02]: intent-gated quote — factual + price-keyword (now/current/today/price/trading at/quote) + resolved ticker = fetch live quote; all other intents skip
+- [02-02]: QuoteUnavailableError always degrades gracefully; chat never 503 due to quote provider failure
+- [02-02]: event: quote emitted after citations and before first token in SSE stream (additive to locked order; no reordering)
 - [01-05]: Temp-file SQLite in streaming tests — SQLite :memory: is connection-scoped; sse_starlette ASGI runner opens new connections in worker threads that see empty DBs
 - [01-05]: Sync generator for stream_complete — OpenAI streaming SDK is synchronous; consumed inline in async event generator
 - [Phase ?]: Native fetch + ReadableStream for SSE (POST /chat/stream — EventSource is GET-only)
@@ -88,3 +92,4 @@ yet exist in this tree — planning is grounded against `plan/trading-chatbot.md
 | Phase 01-chatbot-mvp P05 | 20min | 2 tasks | 3 files |
 | Phase 01-chatbot-mvp P06 | 20min | - tasks | - files |
 | Phase 02-production-polish P01 | ~15min | 3 tasks | 8 files |
+| Phase 02-production-polish P02 | 6min | 3 tasks | 10 files |

@@ -61,7 +61,7 @@ Production polish. Mapped to Phase 2.
 
 ### Live Market Data (Phase 2)
 
-- [ ] **QUOTE-01**: "what's AAPL trading at?" returns a live quote card (price, day change,
+- [x] **QUOTE-01**: "what's AAPL trading at?" returns a live quote card (price, day change,
   volume, timestamp, source); "what's the outlook for AAPL?" returns cited memory with no
   quote card. Quotes are cached ~15 min and timestamped.
 

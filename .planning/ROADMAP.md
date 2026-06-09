@@ -67,7 +67,7 @@ Plans:
 
 **Wave 2** *(blocked on Wave 1 completion)*
 
-- [ ] 02-02: Live market-data quote layer (slice 7)
+- [x] 02-02: Live market-data quote layer (slice 7)
 
 **Wave 3** *(blocked on Wave 2 completion)*
 
@@ -94,4 +94,4 @@ Phases execute in numeric order: 1 → 2
 | Phase | Plans Complete | Status | Completed |
 |-------|----------------|--------|-----------|
 | 1. Chatbot MVP | 7/7 | Complete   | 2026-06-08 |
-| 2. Production Polish | 1/7 | Executing | - |
+| 2. Production Polish | 2/7 | In Progress|  |
