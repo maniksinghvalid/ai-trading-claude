@@ -72,7 +72,7 @@ Production polish. Mapped to Phase 2.
 
 ### Persistence Scale (Phase 2)
 
-- [ ] **DB-01**: Switching `database_url` to Postgres leaves the chat flow unchanged and
+- [x] **DB-01**: Switching `database_url` to Postgres leaves the chat flow unchanged and
   sessions persisted across restart; a `retrieved_chunk_ids` audit column exists on `Turn`.
 
 ### Rate Limiting (Phase 2)

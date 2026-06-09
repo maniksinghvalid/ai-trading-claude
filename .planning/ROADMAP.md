@@ -75,7 +75,7 @@ Plans:
 
 **Wave 4** *(blocked on Wave 3 completion)*
 
-- [ ] 02-04: Postgres migration (slice 9)
+- [x] 02-04: Postgres migration (slice 9)
 
 **Wave 5** *(blocked on Wave 4 completion)*
 
@@ -94,4 +94,4 @@ Phases execute in numeric order: 1 → 2
 | Phase | Plans Complete | Status | Completed |
 |-------|----------------|--------|-----------|
 | 1. Chatbot MVP | 7/7 | Complete   | 2026-06-08 |
-| 2. Production Polish | 3/7 | In Progress|  |
+| 2. Production Polish | 4/7 | In Progress|  |

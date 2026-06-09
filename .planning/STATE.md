@@ -3,14 +3,14 @@ gsd_state_version: 1.0
 milestone: v1.0
 milestone_name: milestone
 status: executing
-last_updated: "2026-06-09T15:22:03.847Z"
-last_activity: 2026-06-09 -- 02-01 completed (ticker extractor + intent classifier + schema regression test)
+last_updated: "2026-06-09T15:31:55.752Z"
+last_activity: 2026-06-09 -- 02-04 completed (Postgres migration + retrieved_chunk_ids audit column)
 progress:
   total_phases: 2
   completed_phases: 1
   total_plans: 14
-  completed_plans: 10
-  percent: 50
+  completed_plans: 11
+  percent: 79
 ---
 
 # Project State
@@ -25,11 +25,11 @@ See: .planning/PROJECT.md (updated 2026-06-08)
 ## Current Position
 
 Phase: 02 (production-polish) — EXECUTING
-Plan: 4 of 7
+Plan: 5 of 7
 Status: Ready to execute
-Last activity: 2026-06-09 -- 02-01 completed (ticker extractor + intent classifier + schema regression test)
+Last activity: 2026-06-09 -- 02-04 completed (Postgres migration + retrieved_chunk_ids audit column)
 
-Progress: [██████████] 100% (Phase 1) · 64% (milestone, 9/14 plans) · 02-02 complete (2/7 Phase 2 plans)
+Progress: [████████░░] 79% (milestone, 11/14 plans) · 02-04 complete (4/7 Phase 2 plans)
 
 ## Accumulated Context
 
@@ -49,6 +49,9 @@ Progress: [██████████] 100% (Phase 1) · 64% (milestone, 9/1
 - [Phase ?]: openai_model defaults to gpt-4o (current flagship)
 - [Phase ?]: retrieve() dual-filter: server-side Pinecone filter as best-effort + always post-filter returned matches (retrieval gotcha mitigation)
 - [Phase ?]: live_index pytest marker + conftest auto-skip pattern for credential-gated Pinecone tests
+- [02-04]: Column(JSON) via sa_column override makes list[str] work on both SQLite and Postgres without type-casting
+- [02-04]: docker-compose.yml omits version: attribute (Compose v2 considers it obsolete)
+- [02-04]: postgres marker auto-skip mirrors live_index pattern for Postgres integration tests
 - [01-03]: No-data path short-circuits before LLM call — zero chunks yields fixed graceful message, no OpenAI tokens spent
 - [01-03]: Pinecone retrieval failure degrades to no-data (graceful) rather than 503
 - [01-03]: Citations built from real chunk metadata only — partial metadata records silently dropped
@@ -94,3 +97,4 @@ yet exist in this tree — planning is grounded against `plan/trading-chatbot.md
 | Phase 02-production-polish P01 | ~15min | 3 tasks | 8 files |
 | Phase 02-production-polish P02 | 6min | 3 tasks | 10 files |
 | Phase 02-production-polish P03 | 16min | 3 tasks | 13 files |
+| Phase 02-production-polish P04 | ~15min | 3 tasks | 6 files |
