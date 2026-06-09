@@ -67,7 +67,7 @@ Production polish. Mapped to Phase 2.
 
 ### Auth & Isolation (Phase 2)
 
-- [ ] **AUTH-01**: Magic-link email issues a 24h JWT on click; unauthenticated `/chat` returns
+- [x] **AUTH-01**: Magic-link email issues a 24h JWT on click; unauthenticated `/chat` returns
   401; a logged-in user sees only their own sessions (User A cannot access User B's sessions).
 
 ### Persistence Scale (Phase 2)

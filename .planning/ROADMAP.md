@@ -71,7 +71,7 @@ Plans:
 
 **Wave 3** *(blocked on Wave 2 completion)*
 
-- [ ] 02-03: Magic-link auth + per-user session isolation (slice 8)
+- [x] 02-03: Magic-link auth + per-user session isolation (slice 8)
 
 **Wave 4** *(blocked on Wave 3 completion)*
 
@@ -94,4 +94,4 @@ Phases execute in numeric order: 1 → 2
 | Phase | Plans Complete | Status | Completed |
 |-------|----------------|--------|-----------|
 | 1. Chatbot MVP | 7/7 | Complete   | 2026-06-08 |
-| 2. Production Polish | 2/7 | In Progress|  |
+| 2. Production Polish | 3/7 | In Progress|  |
