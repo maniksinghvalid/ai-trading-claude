@@ -59,7 +59,7 @@ market data, auth + isolation, Postgres, rate limiting, polished UI, and a publi
   3. Spamming past the per-user daily budget returns 429 with a `retry-after` header.
   4. The full stack is reachable at a public URL and chat works end-to-end through the deployed services; the schema-regression test passes in CI.
 
-**Plans**: TBD
+**Plans**: 7 plans
 
 Plans:
 
