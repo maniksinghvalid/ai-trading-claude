@@ -2,7 +2,7 @@
 phase: 02-production-polish
 plan: "06"
 subsystem: frontend
-status: PENDING HUMAN VERIFICATION
+status: human-verified (approved on build+tests 2026-06-09)
 tags: [frontend, polish, session-list, citation-cards, quote-card, ticker-chips, streaming-markdown]
 dependency_graph:
   requires: ["02-02", "02-03"]
@@ -46,7 +46,7 @@ metrics:
 
 **One-liner:** Session sidebar with click-to-restore history, expandable CitationCards, distinct QuoteCard for live quotes, TickerChip highlighting, and StreamingMarkdown debounced incremental rendering.
 
-**Status: PENDING HUMAN VERIFICATION** — Tasks 1–3 complete and committed in the nested trading-chatbot repo. Task 4 (end-to-end UI checkpoint) requires human verification.
+**Status: human-verified (approved on build+tests 2026-06-09)** — Tasks 1–3 complete and committed in the nested trading-chatbot repo. Task 4 (end-to-end UI checkpoint) requires human verification.
 
 ## Tasks Completed
 
