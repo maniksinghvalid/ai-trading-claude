@@ -2,13 +2,13 @@
 gsd_state_version: 1.0
 milestone: v1.0
 milestone_name: milestone
-status: "Phase 1 shipped — PR #7 (parent docs) updated; 01-07 code pushed to trading-chatbot main"
-last_updated: "2026-06-09T05:30:50.643Z"
-last_activity: 2026-06-09 -- Phase 02 planning complete
+status: executing
+last_updated: "2026-06-09T07:45:34.576Z"
+last_activity: 2026-06-09 -- Phase 02 execution started
 progress:
   total_phases: 2
   completed_phases: 1
-  total_plans: 7
+  total_plans: 14
   completed_plans: 7
   percent: 50
 ---
@@ -20,16 +20,16 @@ progress:
 See: .planning/PROJECT.md (updated 2026-06-08)
 
 **Core value:** Every factual claim is grounded in a real, cited stored report.
-**Current focus:** Phase 1 — Chatbot MVP
+**Current focus:** Phase 02 — production-polish
 
 ## Current Position
 
-Phase: 1 (Chatbot MVP) — COMPLETE (gap closure 01-07 browser-verified)
-Plan: 7 of 7
-Status: Phase 1 shipped — PR #7 (parent docs) updated; 01-07 code pushed to trading-chatbot main
-Last activity: 2026-06-09 -- Phase 02 planning complete
+Phase: 02 (production-polish) — EXECUTING
+Plan: 2 of 7
+Status: Executing Phase 02
+Last activity: 2026-06-09 -- 02-01 completed (ticker extractor + intent classifier + schema regression test)
 
-Progress: [██████████] 100% (Phase 1) · 50% (milestone, 1/2 phases)
+Progress: [██████████] 100% (Phase 1) · 50% (milestone, 1/2 phases) · 02-01 complete (1/7 Phase 2 plans)
 
 ## Accumulated Context
 
@@ -54,6 +54,11 @@ Progress: [██████████] 100% (Phase 1) · 50% (milestone, 1/2
 - [01-03]: Citations built from real chunk metadata only — partial metadata records silently dropped
 - [01-04]: Coreference via stored ticker_scope — req.ticker=None inherits most recent non-null ticker_scope from history, no LLM call needed (Phase 2 slice 6 adds full extraction)
 - [01-04]: No-data path also persists both turns so follow-up turns have complete prior context
+- [02-01]: 3-tier ticker resolution: explicit req.ticker > first extracted > coreference ticker_scope
+- [02-01]: LLM fallback in ticker_extractor fires only when regex yields zero candidates (cost bound)
+- [02-01]: classify_intent degrades to factual + regex tickers on any LLM failure
+- [02-01]: intent result stored in local var for slice 7; no live-quote logic added yet
+- [02-01]: autouse pytest fixture pattern for offline stubs avoids modifying every existing test
 - [01-05]: Temp-file SQLite in streaming tests — SQLite :memory: is connection-scoped; sse_starlette ASGI runner opens new connections in worker threads that see empty DBs
 - [01-05]: Sync generator for stream_complete — OpenAI streaming SDK is synchronous; consumed inline in async event generator
 - [Phase ?]: Native fetch + ReadableStream for SSE (POST /chat/stream — EventSource is GET-only)
@@ -82,3 +87,4 @@ yet exist in this tree — planning is grounded against `plan/trading-chatbot.md
 | Phase 01-chatbot-mvp P04 | ~15min | 2 tasks | 5 files |
 | Phase 01-chatbot-mvp P05 | 20min | 2 tasks | 3 files |
 | Phase 01-chatbot-mvp P06 | 20min | - tasks | - files |
+| Phase 02-production-polish P01 | ~15min | 3 tasks | 8 files |

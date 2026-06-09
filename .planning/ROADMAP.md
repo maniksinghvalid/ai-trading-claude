@@ -63,7 +63,7 @@ market data, auth + isolation, Postgres, rate limiting, polished UI, and a publi
 Plans:
 **Wave 1**
 
-- [ ] 02-01: Ticker extraction + intent classification + coreference (slice 6)
+- [x] 02-01: Ticker extraction + intent classification + coreference (slice 6)
 
 **Wave 2** *(blocked on Wave 1 completion)*
 
@@ -94,4 +94,4 @@ Phases execute in numeric order: 1 → 2
 | Phase | Plans Complete | Status | Completed |
 |-------|----------------|--------|-----------|
 | 1. Chatbot MVP | 7/7 | Complete   | 2026-06-08 |
-| 2. Production Polish | 0/7 | Not started | - |
+| 2. Production Polish | 1/7 | Executing | - |
