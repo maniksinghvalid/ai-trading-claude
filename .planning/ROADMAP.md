@@ -60,15 +60,30 @@ market data, auth + isolation, Postgres, rate limiting, polished UI, and a publi
   4. The full stack is reachable at a public URL and chat works end-to-end through the deployed services; the schema-regression test passes in CI.
 
 **Plans**: 7 plans
-
 Plans:
+**Wave 1**
 
 - [ ] 02-01: Ticker extraction + intent classification + coreference (slice 6)
+
+**Wave 2** *(blocked on Wave 1 completion)*
+
 - [ ] 02-02: Live market-data quote layer (slice 7)
+
+**Wave 3** *(blocked on Wave 2 completion)*
+
 - [ ] 02-03: Magic-link auth + per-user session isolation (slice 8)
+
+**Wave 4** *(blocked on Wave 3 completion)*
+
 - [ ] 02-04: Postgres migration (slice 9)
+
+**Wave 5** *(blocked on Wave 4 completion)*
+
 - [ ] 02-05: Rate limiting + cost tracking (slice 10)
 - [ ] 02-06: Frontend polish — sessions, citations, chips (slice 11)
+
+**Wave 6** *(blocked on Wave 5 completion)*
+
 - [ ] 02-07: Containerized deployment (slice 12)
 
 ## Progress
