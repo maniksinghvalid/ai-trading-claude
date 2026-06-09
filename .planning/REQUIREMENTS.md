@@ -77,7 +77,7 @@ Production polish. Mapped to Phase 2.
 
 ### Rate Limiting (Phase 2)
 
-- [ ] **RATE-01**: Exceeding the per-user daily budget returns 429 with a `retry-after`
+- [x] **RATE-01**: Exceeding the per-user daily budget returns 429 with a `retry-after`
   header; budget resets at midnight UTC; `/admin/budgets` shows current usage.
 
 ### Frontend Polish (Phase 2)

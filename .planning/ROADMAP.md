@@ -79,7 +79,7 @@ Plans:
 
 **Wave 5** *(blocked on Wave 4 completion)*
 
-- [ ] 02-05: Rate limiting + cost tracking (slice 10)
+- [x] 02-05: Rate limiting + cost tracking (slice 10)
 - [x] 02-06: Frontend polish — sessions, citations, chips (slice 11)
 
 **Wave 6** *(blocked on Wave 5 completion)*
@@ -94,4 +94,4 @@ Phases execute in numeric order: 1 → 2
 | Phase | Plans Complete | Status | Completed |
 |-------|----------------|--------|-----------|
 | 1. Chatbot MVP | 7/7 | Complete   | 2026-06-08 |
-| 2. Production Polish | 5/7 | In Progress|  |
+| 2. Production Polish | 6/7 | In Progress|  |
