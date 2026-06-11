@@ -17,7 +17,7 @@ deployment. Every slice has a runnable gate. Derived from `plan/trading-chatbot.
 - Decimal phases (2.1, 2.2): Urgent insertions (marked with INSERTED)
 
 - [x] **Phase 1: Chatbot MVP** - Backend + Pinecone RAG + streaming + Next.js chat, end-to-end (completed 2026-06-08)
-- [ ] **Phase 2: Production Polish** - Ticker/intent, live quotes, auth, Postgres, rate limits, deploy
+- [x] **Phase 2: Production Polish** - Ticker/intent, live quotes, auth, Postgres, rate limits, deploy (completed 2026-06-11)
 
 ## Phase Details
 
@@ -84,7 +84,7 @@ Plans:
 
 **Wave 6** *(blocked on Wave 5 completion)*
 
-- [ ] 02-07: Containerized deployment (slice 12)
+- [x] 02-07: Containerized deployment (slice 12)
 
 **Gap Closures (UAT-driven)**
 
@@ -98,4 +98,4 @@ Phases execute in numeric order: 1 → 2
 | Phase | Plans Complete | Status | Completed |
 |-------|----------------|--------|-----------|
 | 1. Chatbot MVP | 7/7 | Complete   | 2026-06-08 |
-| 2. Production Polish | 7/8 (6 core + 1 gap) | In Progress|  |
+| 2. Production Polish | 9/9 | Complete   | 2026-06-11 |
