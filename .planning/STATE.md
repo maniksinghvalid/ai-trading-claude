@@ -3,14 +3,14 @@ gsd_state_version: 1.0
 milestone: v1.0
 milestone_name: milestone
 status: executing
-last_updated: "2026-06-09T16:03:59.485Z"
-last_activity: 2026-06-09 -- 02-05 completed (per-user rate limiting + cost tracking, RATE-01)
+last_updated: "2026-06-11T17:36:15Z"
+last_activity: 2026-06-11 -- 02-09 completed (gap closure: sessions sidebar always empty after login, UAT test 8, POLISH-01)
 progress:
   total_phases: 2
   completed_phases: 1
-  total_plans: 14
-  completed_plans: 12
-  percent: 93
+  total_plans: 15
+  completed_plans: 13
+  percent: 87
 ---
 
 # Project State
@@ -25,11 +25,11 @@ See: .planning/PROJECT.md (updated 2026-06-08)
 ## Current Position
 
 Phase: 02 (production-polish) — EXECUTING
-Plan: 6 of 7
-Status: Ready to execute
-Last activity: 2026-06-09 -- 02-05 completed (per-user rate limiting + cost tracking, RATE-01)
+Plan: 09 gap-closure complete
+Status: Ready for next plan (02-07 deployment or additional gap closures)
+Last activity: 2026-06-11 -- 02-09 completed (gap closure: sessions sidebar refresh, UAT test 8, POLISH-01)
 
-Progress: [█████████░] 93% (milestone, 12/14 plans) · 02-05 complete (5/7 Phase 2 plans)
+Progress: [████████░░] 87% (milestone, 13/15 plans) · 02-09 gap-closure complete
 
 ## Accumulated Context
 
@@ -74,6 +74,10 @@ Progress: [█████████░] 93% (milestone, 12/14 plans) · 02-05
 - [Phase ?]: Native fetch + ReadableStream for SSE (POST /chat/stream — EventSource is GET-only)
 - [Phase ?]: ReactMarkdown without rehype-raw: XSS defense T-06-01 for LLM output in chat UI
 - [Phase ?]: sessionId in React state: Phase 1 single-user MVP; cross-reload persistence deferred to Phase 2
+- [02-09]: SessionList tokenReady initialised synchronously from localStorage — no poll needed for already-logged-in loads
+- [02-09]: 401 from GET /sessions leaves list empty and quiet; token-availability path re-fetches silently once token lands
+- [02-09]: refreshTrigger is a counter (not boolean) so each new-session event triggers a distinct re-fetch even if multiple arrive before fetch completes
+- [02-09]: Optimistic "(new session)" entry uses Array.some() dedup by session_id — reconciled on next refreshTrigger fetch
 
 ### Constraints
 
@@ -102,3 +106,4 @@ yet exist in this tree — planning is grounded against `plan/trading-chatbot.md
 | Phase 02-production-polish P03 | 16min | 3 tasks | 13 files |
 | Phase 02-production-polish P04 | ~15min | 3 tasks | 6 files |
 | Phase 02-production-polish P05 | ~15min | 3 tasks | 6 files |
+| Phase 02-production-polish P09 (gap) | ~10min | 2 tasks | 2 files |

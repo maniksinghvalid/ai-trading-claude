@@ -86,6 +86,10 @@ Plans:
 
 - [ ] 02-07: Containerized deployment (slice 12)
 
+**Gap Closures (UAT-driven)**
+
+- [x] 02-09: Sessions sidebar always empty after login — re-fetch on token availability + refreshTrigger + optimistic entry (UAT test 8, POLISH-01, completed 2026-06-11)
+
 ## Progress
 
 **Execution Order:**
@@ -94,4 +98,4 @@ Phases execute in numeric order: 1 → 2
 | Phase | Plans Complete | Status | Completed |
 |-------|----------------|--------|-----------|
 | 1. Chatbot MVP | 7/7 | Complete   | 2026-06-08 |
-| 2. Production Polish | 6/7 | In Progress|  |
+| 2. Production Polish | 7/8 (6 core + 1 gap) | In Progress|  |
