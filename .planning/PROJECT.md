@@ -21,25 +21,31 @@ don't have stored analysis for X" when it doesn't.
 
 <!-- Shipped and confirmed valuable. -->
 
-(None yet — ship to validate)
+- ✓ Bootstrap + read-only Pinecone contract (BOOT) — v1.0
+- ✓ Backend + Pinecone retrieval client (RAG) — v1.0
+- ✓ RAG chat with citations + disclaimer (CHAT) — v1.0
+- ✓ Conversation persistence + multi-turn coreference (CONV) — v1.0
+- ✓ SSE token streaming (STREAM) — v1.0
+- ✓ Next.js streaming chat frontend (UI) — v1.0
+- ✓ Ticker extraction + intent classification (TICK) — v1.0
+- ✓ Live market-data quote layer (QUOTE) — v1.0
+- ✓ Magic-link auth + per-user isolation (AUTH) — v1.0
+- ✓ Postgres migration for multi-user (DB) — v1.0
+- ✓ Rate limiting + cost tracking (RATE) — v1.0
+- ✓ Frontend polish — sessions, citations, chips (POLISH) — v1.0
+- ✓ Containerized deployment + CI schema gate (DEPLOY) — v1.0
+
+### Current State
+
+**Shipped: v1.0 (2026-06-11)** — full cited RAG chatbot, multi-user, deployable; audit passed
+17/17. App lives in the nested `trading-chatbot/` repo (FastAPI backend + Next.js frontend).
+Carried-forward hygiene item: wire `admin.py` `_require_admin` via `Depends`.
 
 ### Active
 
-<!-- Current scope. Building toward these. See REQUIREMENTS.md for full checkable list. -->
+<!-- Next milestone TBD — run /gsd-new-milestone. -->
 
-- [ ] Repo bootstrap + verified read-only Pinecone contract (BOOT)
-- [ ] Python backend + Pinecone retrieval client (RAG)
-- [ ] RAG chat endpoint with citations + disclaimer (CHAT)
-- [ ] Conversation persistence + multi-turn coreference (CONV)
-- [ ] SSE token streaming (STREAM)
-- [ ] Next.js streaming chat frontend (UI)
-- [ ] Ticker extraction + intent classification (TICK)
-- [ ] Live market-data quote layer (QUOTE)
-- [ ] Magic-link auth + per-user isolation (AUTH)
-- [ ] Postgres migration for multi-user (DB)
-- [ ] Rate limiting + cost tracking (RATE)
-- [ ] Frontend polish — sessions, citations, chips (POLISH)
-- [ ] Containerized deployment (DEPLOY)
+_No active scope. Run `/gsd-new-milestone` to define v1.1._
 
 ### Out of Scope
 
