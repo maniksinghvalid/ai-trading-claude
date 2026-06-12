@@ -1,9 +1,10 @@
 ---
 phase: 02-production-polish
-verified: 2026-06-09T20:00:00Z
-status: human_needed
-score: 7/8 must-haves verified
+verified: 2026-06-11T00:30:00Z
+status: passed
+score: 8/8 must-haves verified (human items confirmed via 02-UAT.md re-test on 2026-06-11)
 overrides_applied: 0
+resolution: "human_verification items resolved through conversational UAT (02-UAT.md): 11 passed, 0 issues, 1 skipped (RATE-01 covered by unit tests). POLISH-01 UI flow and DEPLOY-01 confirmed pass. Three UAT-discovered defects (coreference stale ticker, no-data affirmative wrong ticker, empty sidebar) were fixed by gap-closure plans 02-08 + 02-09 and re-verified."
 human_verification:
   - test: "End-to-end UI flow: sidebar session list + click-to-restore + citation cards + quote card + ticker chips (POLISH-01)"
     expected: "Refresh shows sessions in sidebar; clicking restores full history; citations expand; quote card distinct; tickers highlighted"

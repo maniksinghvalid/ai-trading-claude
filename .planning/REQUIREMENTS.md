@@ -55,7 +55,7 @@ Production polish. Mapped to Phase 2.
 
 ### Ticker & Intent (Phase 2)
 
-- [ ] **TICK-01**: A message with no explicit ticker ("how is apple doing") resolves to AAPL;
+- [x] **TICK-01**: A message with no explicit ticker ("how is apple doing") resolves to AAPL;
   intent is classified (factual/trajectory/comparison/action/chitchat); a follow-up ("and
   microsoft?") resolves MSFT while keeping AAPL in scope (coreference).
 
@@ -82,17 +82,17 @@ Production polish. Mapped to Phase 2.
 
 ### Frontend Polish (Phase 2)
 
-- [ ] **POLISH-01**: A sidebar lists prior sessions; clicking one restores full history;
+- [x] **POLISH-01**: A sidebar lists prior sessions; clicking one restores full history;
   citation cards expand to chunk text; ticker chips highlight detected tickers.
 
 ### Deployment (Phase 2)
 
-- [ ] **DEPLOY-01**: Backend and frontend run from Dockerfiles; secrets live in the deploy
+- [x] **DEPLOY-01**: Backend and frontend run from Dockerfiles; secrets live in the deploy
   platform; a public URL serves the stack and chat works end-to-end through it.
 
 ## Cross-Cutting Verification
 
-- [ ] **VERIFY-SCHEMA**: A regression test retrieves one sample chunk and asserts all required
+- [x] **VERIFY-SCHEMA**: A regression test retrieves one sample chunk and asserts all required
   metadata fields (`ticker`, `report_type`, `generated_at`, `generated_date`, `source_path`)
   are present; fails loudly if any is missing. Runs in CI on every commit.
 
