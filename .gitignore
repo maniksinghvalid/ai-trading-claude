@@ -2,6 +2,12 @@
 *.json
 !scripts/*.json
 !proxy/vercel.json
+!.planning/config.json
+# Postman proxy collection: commit the templates (placeholder token only),
+# but keep any local env holding the REAL bearer ignored.
+!proxy/postman/pinecone-proxy.postman_collection.json
+!proxy/postman/pinecone-proxy.postman_environment.json
+proxy/postman/*.local.postman_environment.json
 __pycache__/
 *.pyc
 .DS_Store
