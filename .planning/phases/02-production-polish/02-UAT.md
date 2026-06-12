@@ -3,12 +3,12 @@ status: complete
 phase: 02-production-polish
 source: [02-01-SUMMARY.md, 02-02-SUMMARY.md, 02-03-SUMMARY.md, 02-04-SUMMARY.md, 02-05-SUMMARY.md, 02-06-SUMMARY.md, 02-07-SUMMARY.md]
 started: 2026-06-10T01:57:45Z
-updated: 2026-06-10T02:15:00Z
+updated: 2026-06-11T00:20:00Z
 ---
 
 ## Current Test
 
-[testing complete]
+[testing complete — all re-tests pass]
 
 ## Tests
 
@@ -20,21 +20,19 @@ result: pass
 expected: Click "Log in" → enter your email → submit shows "Check your inbox". An email from "Trading Chatbot <noreply@mga-pservices.cloud>" arrives; clicking the link lands on /auth/callback, then redirects to chat with the header showing your email + "Log out".
 result: pass
 
-### 3. Automatic ticker + intent (TICK-01)
-expected: Ask "what's the bull case for MARA" WITHOUT typing anything in the Ticker box — the bot resolves MARA on its own. A follow-up like "and the risks?" stays on MARA (coreference).
-result: issue
-reported: "I switched from MARA to CLOV and when i said stock price, i got back MARA stock price instead of SPCE."
-severity: major
+### 3. Automatic ticker + intent (TICK-01) — RE-TEST after 02-08
+expected: Start a fresh chat. Switch tickers (e.g. MARA → CLOV/SPCE), then a bare follow-up ("stock price") must use the most-recently referenced ticker, not a stale earlier one.
+result: pass
+prior_result: issue (switched MARA→CLOV, "stock price" returned MARA) — fixed by 02-08 history() most-recent-N window
 
 ### 4. RAG answer with expandable citations
 expected: A question about a held ticker (e.g. "options for MARA") returns an answer grounded in stored reports, with a SOURCES list of expandable cards showing source file, type (ANALYSIS/OPTIONS), and date. Clicking a card reveals the chunk text.
 result: pass
 
-### 5. No-data → "yes" → live quote (QUOTE-01)
-expected: Ask "bull case for Apple" (no AAPL in the index) → bot replies "I don't have stored analysis for AAPL; would you like live market data instead?". Reply "yes" → a live AAPL QuoteCard appears (price, day change, volume, ~15 min delayed note) — NOT the same offer repeated.
-result: issue
-reported: "when requesting data from live market, got options data for MARA which is incorrect"
-severity: major
+### 5. No-data → "yes" → live quote (QUOTE-01) — RE-TEST after 02-08
+expected: Ask "bull case for Apple" (no AAPL in the index) → bot offers live market data. Reply "yes" → a live AAPL QuoteCard appears — NOT a different ticker's (e.g. MARA) RAG answer.
+result: pass
+prior_result: issue ("yes" returned MARA options) — fixed by 02-08 _offered_ticker() + history() window
 
 ### 6. Price-intent live quote card (QUOTE-01)
 expected: Ask "what's MARA trading at?" → a distinct QuoteCard (price, % change in green/red, volume, ~15 min delayed) renders, separate from any cited memory.
@@ -44,11 +42,10 @@ result: pass
 expected: The sidebar lists only YOUR sessions. Logging out (or no token) blocks chat — an unauthenticated request is rejected (401), not answered.
 result: pass
 
-### 8. Session sidebar + history restore (POLISH-01)
-expected: After a couple of chats, refresh the page → prior sessions appear in the SESSIONS sidebar → clicking one restores its full conversation history into the chat pane.
-result: issue
-reported: "the sidebar is always empty even though I see sessions"
-severity: major
+### 8. Session sidebar + history restore (POLISH-01) — RE-TEST after 02-09
+expected: After login the SESSIONS sidebar lists existing sessions; starting a new chat adds an entry without a manual reload; clicking a session restores its full history.
+result: pass
+prior_result: issue (sidebar always empty) — fixed by 02-09 token-ready re-fetch + refreshTrigger
 
 ### 9. Response formatting (POLISH-01)
 expected: Assistant answers render as clean Markdown — real section headings, bulleted/numbered lists each on their own line, bold labels, and compact [1]/[2] citations inline (full details in SOURCES). No run-on single-paragraph blob.
@@ -70,16 +67,17 @@ result: pass
 ## Summary
 
 total: 12
-passed: 8
-issues: 3
+passed: 11
+issues: 0
 pending: 0
 skipped: 1
 blocked: 0
+note: Re-testing tests 3, 5, 8 after gap closure (02-08 backend coreference/window, 02-09 sidebar refresh). Other 8 passes + 1 skip carried over.
 
 ## Gaps
 
 - truth: "A follow-up with no explicit ticker resolves to the MOST-RECENTLY referenced ticker (coreference), not a stale earlier one."
-  status: failed
+  status: resolved
   reason: "User reported: switched MARA -> CLOV, then asked 'stock price' and got MARA's price back instead of the current ticker."
   severity: major
   test: 3
@@ -92,7 +90,7 @@ blocked: 0
     - "Regression test: MARA -> CLOV -> bare 'stock price' resolves CLOV; and a >10-turn conversation still coreferences the latest ticker."
 
 - truth: "Replying 'yes' to the no-data live-data offer fetches a quote for the SAME ticker that was just offered (e.g. AAPL), not a stale earlier one."
-  status: failed
+  status: resolved
   reason: "User reported: after the AAPL no-data offer, replying 'yes' returned MARA options data instead of an AAPL live quote."
   severity: major
   test: 5
@@ -105,7 +103,7 @@ blocked: 0
     - "Regression test: AAPL no-data offer -> 'yes' -> AAPL live quote (not a different ticker's RAG answer)."
 
 - truth: "The sidebar lists the user's sessions and updates after login and after a new session is created."
-  status: failed
+  status: resolved
   reason: "User reported: the sidebar is always empty even though sessions exist. Backend GET /sessions returns 200 with the sessions correctly; the frontend never shows them."
   severity: major
   test: 8
