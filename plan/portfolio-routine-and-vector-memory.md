@@ -710,9 +710,9 @@ Docs natively) → normalize to a clean uppercase ticker list (strip shares/$/na
 
 **Output:**
 - Print normalized list.
-- Write CWD `TRADE-HOLDINGS.md` (for visibility, no longer load-bearing).
-- Write `~/.claude/trade/TRADE-HOLDINGS.md` as the **fallback cache** for the routine to use
-  when Drive is unavailable. This is the only piece of local state.
+- Write `~/.claude/trade/TRADE-HOLDINGS.md` as the **canonical cache** for the routine to use
+  when Drive is unavailable. This is the only piece of local state — no CWD copy is written
+  (cloud routines prompt for permission on CWD writes, and nothing downstream consumes one).
 
 `/trade routine` always re-reads Drive directly when Drive is available; the cache is read
 only on Drive failure.
@@ -917,7 +917,7 @@ AAPL` returns the record with all populated fields non-null; frontmatter-field-a
 table from §2 is enforced.
 
 ### Slice 5 — `trade-holdings` skill + `trade-portfolio` Drive-first update (1–2 days)
-- `trade-holdings`: Drive read, CWD copy, `~/.claude/trade/TRADE-HOLDINGS.md` fallback cache.
+- `trade-holdings`: Drive read, `~/.claude/trade/TRADE-HOLDINGS.md` cache (no CWD copy).
 - `trade-portfolio`: try `/trade holdings` first; fall back to interactive paste.
 - First-run flow: starter Sheet, archive-folder creation, Slack channel discovery.
 - Add to install/uninstall arrays and `trade/SKILL.md` command table.
