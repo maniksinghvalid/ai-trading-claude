@@ -77,7 +77,9 @@ RUN_ID grammar `trade-analyze`'s ingest call uses).
 
 ### P2 — Load holdings
 
-Try Drive first via the `/trade holdings` skill (Drive read + cache write).
+Try Drive first via the `/trade holdings` skill (Drive read + write to the
+`~/.claude/trade/TRADE-HOLDINGS.md` cache only — it does NOT write a copy to
+CWD, so the routine never triggers a CWD-write permission prompt for holdings).
 Then read the cache to get the canonical ticker list:
 
 ```bash

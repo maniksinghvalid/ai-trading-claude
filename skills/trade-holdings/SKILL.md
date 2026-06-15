@@ -167,9 +167,14 @@ Print to the terminal, in this order:
    ...
    ```
 
-3. Write the same list to `TRADE-HOLDINGS.md` in the current working
-   directory. This file is for visibility only — the routine does NOT depend
-   on it. Use this exact shape so future tooling can parse it:
+3. Write the list to `~/.claude/trade/TRADE-HOLDINGS.md` — this is the
+   **canonical cache** that `/trade routine` reads when Drive is unavailable,
+   and the only piece of local state this skill maintains. The path is fixed;
+   do not parameterize. Create the parent directory if missing
+   (`mkdir -p ~/.claude/trade`). Do NOT write any copy to the current working
+   directory — cloud routines prompt for permission on CWD writes, and nothing
+   downstream consumes a CWD copy. Use this exact shape so future tooling can
+   parse it:
 
    ```markdown
    ---
@@ -203,19 +208,11 @@ Print to the terminal, in this order:
 
    `## Positions` is additive — the routine still reads `## Tickers` for the
    sweep loop and only consults `## Positions` (when present) for options
-   sizing. Use `—` for unknown shares/cost so the table stays aligned. This
-   template feeds **both** the CWD `TRADE-HOLDINGS.md` and the
-   `~/.claude/trade/TRADE-HOLDINGS.md` cache below.
+   sizing. Use `—` for unknown shares/cost so the table stays aligned.
 
-4. Write the same content to `~/.claude/trade/TRADE-HOLDINGS.md` — this is
-   the **fallback cache** that `/trade routine` reads when Drive is
-   unavailable. The path is fixed; do not parameterize. Create the parent
-   directory if missing (`mkdir -p ~/.claude/trade`).
-
-5. Print a footer:
+4. Print a footer:
    ```
-   ✓ Cached to ~/.claude/trade/TRADE-HOLDINGS.md (routine fallback)
-   ✓ Wrote TRADE-HOLDINGS.md to CWD
+   ✓ Cached to ~/.claude/trade/TRADE-HOLDINGS.md (routine cache)
    ```
 
 ### PHASE 4 — Optional setup hints (always print, idempotent)
@@ -353,10 +350,12 @@ connect it later.
    ambiguity to the user.
 2. ALWAYS dedupe — the same ticker in multiple accounts counts once.
 3. ALWAYS uppercase before storing or displaying.
-4. The fallback cache at `~/.claude/trade/TRADE-HOLDINGS.md` is the ONLY
-   piece of local state this skill maintains. Don't write anywhere else.
-5. The CWD `TRADE-HOLDINGS.md` is for visibility only — never relied on by
-   downstream skills. Re-running `/trade holdings` overwrites both.
+4. The cache at `~/.claude/trade/TRADE-HOLDINGS.md` is the ONLY piece of
+   local state this skill maintains. Don't write anywhere else.
+5. NEVER write a `TRADE-HOLDINGS.md` to the current working directory. Cloud
+   routines prompt for permission on CWD writes, and no downstream skill
+   consumes a CWD copy — the `~/.claude/trade/` cache is the single source.
+   Re-running `/trade holdings` overwrites the cache in place.
 6. When `/trade routine` reads the cache, it should print a `[warn] Drive
    unavailable; using cached holdings from <date>` line — that warning is
    the routine's responsibility, not this skill's.
