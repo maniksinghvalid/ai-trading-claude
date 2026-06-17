@@ -43,7 +43,7 @@ The flagship `/trade analyze` (in `skills/trade-analyze/SKILL.md`) runs a strict
 
 The 5 files in `agents/` are the subagent definitions for that fan-out. Note `skills/trade-technical/` etc. (single-dimension command) and `agents/trade-technical.md` (subagent invoked by `analyze`) are *related but distinct* prompts — keep their methodology consistent.
 
-`/trade routine` runs an **options overlay** (Step 3d) for every analyze-tier (or escalated) holding: it dispatches the position-aware + signal-aware `/trade options <T>`, writes `TRADE-OPTIONS-<TICKER>-<ts>.md`, and ingests it as an `OPTIONS` record under the sweep's `run_id`. The overlay is bounded by the escalation cap, skippable with `--no-options`, and non-fatal to the sweep. Position context (LONG/FLAT + share count) comes from the `## Positions` table that `trade-holdings` now parses into `~/.claude/trade/TRADE-HOLDINGS.md`.
+`/trade routine` runs an **options overlay** (Step 3d) for every analyze-tier (or escalated) holding: it dispatches the position-aware + signal-aware `/trade options <T>`, writes `TRADE-OPTIONS-<TICKER>-<ts>.md`, and ingests it as an `OPTIONS` record under the sweep's `run_id`. The overlay is bounded by the escalation cap, skippable with `--no-options`, and non-fatal to the sweep. Position context (LONG/FLAT + share count) comes from the `## Positions` table that `trade-holdings` reads from Google Drive and prints in its output — the routine consumes that output directly (Drive-only; `trade-holdings` keeps no local cache, and the routine aborts rather than falling back if Drive is unreachable).
 
 ## Cross-file contracts (the easy things to break)
 

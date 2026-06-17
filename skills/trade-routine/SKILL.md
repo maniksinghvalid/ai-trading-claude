@@ -77,30 +77,27 @@ RUN_ID grammar `trade-analyze`'s ingest call uses).
 
 ### P2 — Load holdings
 
-Try Drive first via the `/trade holdings` skill (Drive read + write to the
-`~/.claude/trade/TRADE-HOLDINGS.md` cache only — it does NOT write a copy to
-CWD, so the routine never triggers a CWD-write permission prompt for holdings).
-Then read the cache to get the canonical ticker list:
-
-```bash
-cat ~/.claude/trade/TRADE-HOLDINGS.md 2>/dev/null
-```
+Read the canonical ticker list directly from Google Drive by invoking the
+`/trade holdings` skill. It locates the holdings file in the
+`InvestmentSummary` Drive folder, parses it, and produces the normalized,
+deduped, uppercase ticker list (plus a `## Positions` table when share counts
+are present). The routine consumes that result directly — it does NOT read or
+write any local holdings cache, and it never writes to the current working
+directory.
 
 Decision tree:
-- **Drive read succeeds via `/trade holdings`** → use that list; the cache
-  is now fresh.
-- **Drive MCP unavailable or holdings file not found** → read the existing
-  `~/.claude/trade/TRADE-HOLDINGS.md` cache; print on stderr:
-  `[warn] Drive unavailable; using cached holdings from <YYYY-MM-DD>`.
-  The date comes from the cache's `source_modified` frontmatter or its
-  mtime.
-- **Both unavailable** (no Drive AND no cache file) → abort with:
-  `[error] No holdings available. Run /trade holdings once with Drive
-  connected to populate the cache, or paste a list into
-  ~/.claude/trade/TRADE-HOLDINGS.md manually. Aborting routine.`
-  Exit cleanly; do NOT continue with an empty ticker list.
+- **`/trade holdings` returns a ticker list** → use it as the canonical
+  holdings for this sweep.
+- **Drive MCP unavailable, the holdings file isn't found, or zero tickers
+  are extracted** → abort with:
+  `[error] No holdings available — Drive could not be read. Connect the
+  Google Drive MCP and confirm the InvestmentSummary folder holds a readable
+  holdings file, then re-run. Aborting routine.`
+  Exit cleanly; do NOT continue with an empty ticker list, and do NOT fall
+  back to any stale local copy.
 
-Parse the cache's `## Tickers` bullet list to get the array of tickers.
+Take the `## Tickers` list from the `/trade holdings` result as the array of
+tickers for the sweep loop.
 
 ### P3 — Initialize counters
 
@@ -286,10 +283,10 @@ tier this sweep (NOT quick-kept, NOT deferred) and `--no-options` was not
 passed (`NO_OPTIONS` unset). This focuses options on positions that got a
 fresh full read and keeps cost bounded by the escalation cap.
 
-1. Resolve position context from `~/.claude/trade/TRADE-HOLDINGS.md`:
+1. Resolve position context from the `/trade holdings` result loaded in P2:
    - `POSITION_BIAS=LONG` (every routine ticker is a holding).
-   - If the cache has `positions_available: true` and a `## Positions` row for
-     `$T` with a numeric Shares value → `POSITION_SHARES=<that number>`; else
+   - If that result includes a `## Positions` row for `$T` with a numeric
+     Shares value → `POSITION_SHARES=<that number>`; else
      `POSITION_SHARES=unknown`.
 2. Reuse the fresh analyze result from Step 3a/3c:
    `ANALYZE_SIGNAL=<new_signal>`, `COMPOSITE_SCORE=<new_score>`.
@@ -528,8 +525,7 @@ holdings live somewhere other than InvestmentSummary.
 
 | Scenario | Routine behavior |
 |---|---|
-| Drive MCP unavailable, cache present | Continue with cached holdings + stderr warning |
-| Drive MCP unavailable, no cache | Abort with clear single-line message + recovery hint |
+| Drive MCP unavailable / holdings file not found / 0 tickers extracted | Abort with a clear single-line message + recovery hint (Drive-only; no local-cache fallback) |
 | `PINECONE_API_KEY` missing/invalid | `recommend-tier` safely returns `analyze`; routine continues at full-tier; `ingest` calls fail silently via `\|\| true`; digest notes "memory unavailable — all tickers ran at analyze tier" |
 | `/trade analyze <T>` fails on a single ticker | Skip that ticker; record an error row in the digest; continue with the next |
 | `/trade quick <T>` fails on a single ticker | Same as analyze failure — record + continue |
