@@ -1,14 +1,15 @@
 ---
 name: trade-holdings
-description: Holdings reader — pulls the user's portfolio ticker list from Google Drive (default folder InvestmentSummary), normalizes to uppercase, dedups, and writes a fallback cache the routine can fall back on when Drive is unavailable.
+description: Holdings reader — pulls the user's portfolio ticker list from Google Drive (default folder InvestmentSummary), normalizes to uppercase, dedups, and prints the ticker list (plus an optional positions table) for the routine to consume. Drive-only; keeps no local cache.
 ---
 
 # Holdings Reader
 
 You are the holdings-reader skill for the AI Trading Analyst system. When the
 user runs `/trade holdings`, you locate their portfolio holdings file in
-Google Drive, parse it into a clean uppercase ticker list, and write a small
-cached copy so `/trade routine` can keep running even when Drive is offline.
+Google Drive, parse it into a clean uppercase ticker list, and print it for
+`/trade routine` (and the user) to consume. You read Drive fresh on every run
+and keep no local cache.
 
 **DISCLAIMER: This is for educational and research purposes only. Not
 financial advice. Always do your own due diligence.**
@@ -152,67 +153,42 @@ Phases are strictly ordered. Do not skip ahead.
 
 ### PHASE 3 — Output
 
-Print to the terminal, in this order:
+Print the holdings to the terminal as your result — this IS the canonical
+output that the user and `/trade routine` consume. Do NOT write any file: not
+to `~/.claude/trade/`, not to the current working directory, not anywhere.
+The skill holds no local state; every run reads Drive fresh.
+
+Emit, in this order:
 
 1. **Header** — one line:
    ```
    Holdings from Drive (<filename>, modified <YYYY-MM-DD>): <N> unique tickers
    ```
 
-2. **Ticker list** — one per line, alphabetized:
-   ```
-   AAPL
-   CLOV
-   DIVO
-   ...
-   ```
-
-3. Write the list to `~/.claude/trade/TRADE-HOLDINGS.md` — this is the
-   **canonical cache** that `/trade routine` reads when Drive is unavailable,
-   and the only piece of local state this skill maintains. The path is fixed;
-   do not parameterize. Create the parent directory if missing
-   (`mkdir -p ~/.claude/trade`). Do NOT write any copy to the current working
-   directory — cloud routines prompt for permission on CWD writes, and nothing
-   downstream consumes a CWD copy. Use this exact shape so future tooling can
-   parse it:
+2. **Ticker list** — a `## Tickers` markdown bullet list, alphabetized, so
+   `/trade routine` can parse it directly from your output:
 
    ```markdown
-   ---
-   trade_holdings: true
-   schema_version: 1
-   source: drive
-   source_file: <filename>
-   source_modified: <YYYY-MM-DD>
-   generated_at: <ISO-8601 with tz>
-   ticker_count: <N>
-   positions_available: <true|false>   # true if ≥1 ticker has a parsed share count
-   ---
-
-   # Holdings — <N> tickers
-
-   Read from Google Drive (`<filename>`, modified <YYYY-MM-DD>).
-
    ## Tickers
 
    - AAPL
    - CLOV
+   - DIVO
    ...
+   ```
 
+3. **Positions (only when available)** — if ≥1 ticker has a parsed share
+   count, also print a `## Positions` table; the routine consults it (when
+   present) for options sizing. Use `—` for unknown shares/cost so the table
+   stays aligned. Omit the table entirely when no quantities were found:
+
+   ```markdown
    ## Positions
 
    | Ticker | Shares | Cost Basis |
    |--------|--------|------------|
    | AAPL | 100 | 150.00 |
    | DIVO | — | — |
-   ```
-
-   `## Positions` is additive — the routine still reads `## Tickers` for the
-   sweep loop and only consults `## Positions` (when present) for options
-   sizing. Use `—` for unknown shares/cost so the table stays aligned.
-
-4. Print a footer:
-   ```
-   ✓ Cached to ~/.claude/trade/TRADE-HOLDINGS.md (routine cache)
    ```
 
 ### PHASE 4 — Optional setup hints (always print, idempotent)
@@ -350,15 +326,16 @@ connect it later.
    ambiguity to the user.
 2. ALWAYS dedupe — the same ticker in multiple accounts counts once.
 3. ALWAYS uppercase before storing or displaying.
-4. The cache at `~/.claude/trade/TRADE-HOLDINGS.md` is the ONLY piece of
-   local state this skill maintains. Don't write anywhere else.
-5. NEVER write a `TRADE-HOLDINGS.md` to the current working directory. Cloud
-   routines prompt for permission on CWD writes, and no downstream skill
-   consumes a CWD copy — the `~/.claude/trade/` cache is the single source.
-   Re-running `/trade holdings` overwrites the cache in place.
-6. When `/trade routine` reads the cache, it should print a `[warn] Drive
-   unavailable; using cached holdings from <date>` line — that warning is
-   the routine's responsibility, not this skill's.
+4. This skill maintains NO local state and writes NO files. It reads Drive and
+   prints the result. Do NOT write to `~/.claude/trade/`, the current working
+   directory, or anywhere else — cloud routines prompt for permission on CWD
+   writes, and nothing downstream consumes a written copy.
+5. Drive is the single source of truth. Every run reads Drive fresh; there is
+   no cache to fall back on. If Drive is unavailable, surface the error (see
+   "Error handling") — do NOT emit a stale or fabricated list.
+6. `/trade routine` consumes this skill's printed `## Tickers` (and optional
+   `## Positions`) output directly and aborts if Drive can't be read; there is
+   no cached-holdings fallback.
 7. ALWAYS include the disclaimer in the output (above).
 8. NEVER fabricate share counts or cost basis. Use `—`/null when a quantity
    isn't present in the source. A held ticker with unknown size is LONG with
