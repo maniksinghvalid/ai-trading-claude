@@ -130,11 +130,11 @@ in the frontmatter.
 | Position | Composite signal | IV environment | Primary strategy | `strategy_outlook` | Intent |
 |----------|------------------|----------------|------------------|--------------------|--------|
 | LONG | STRONG BUY / BUY | High IV (rank ≥50) | Covered Call (OTM) | INCOME | grow + income, keep upside room |
-| LONG | STRONG BUY / BUY | Low IV (rank <50) | Hold shares / Call Diagonal | BULLISH | grow, don't cap a cheap-IV runner |
+| LONG | STRONG BUY / BUY | Low IV (rank <50) | Hold / Call Diagonal (≥100 sh) · PMCC (<100 sh) | BULLISH | grow; PMCC is the capital-efficient substitute when share count is small |
 | LONG | HOLD / NEUTRAL | High IV | Covered Call (near-ATM) | INCOME | manage, harvest elevated premium |
 | LONG | HOLD / NEUTRAL | Low IV | Collar (costless-ish) | HEDGE | manage, cheap protection |
 | LONG | CAUTION / AVOID | any | Protective Put or Collar | HEDGE | hedge downside on a weakening name |
-| FLAT | STRONG BUY / BUY | High IV | Cash-Secured Put | INCOME | grow, get paid to enter |
+| FLAT | STRONG BUY / BUY | High IV | Cash-Secured Put → the Wheel | INCOME | grow; systematic CSP→CC income rotation |
 | FLAT | STRONG BUY / BUY | Low IV | Bull Call Spread / Long Call | BULLISH | grow, cheap directional |
 | FLAT | HOLD / NEUTRAL | High IV | Iron Condor / short premium | NEUTRAL | income on range-bound |
 | FLAT | CAUTION / AVOID | any | Bear Put Spread or stand aside | BEARISH | hedge/avoid; defined risk only |
