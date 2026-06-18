@@ -502,15 +502,144 @@ On any Drive error (auth expired, folder not found, quota exceeded),
 print: `[warn] Drive upload failed (<reason>); digest still in CWD`
 and continue to Step 3.
 
+**Step W — AutoTrader paper-trade webhook (additive; NON-FATAL).** Runs after
+Drive upload when `options_count > 0` (skip entirely if no options overlay ran
+this sweep or `--no-options` was passed). On ANY error, log
+`[warn] step-W: <detail>` to stderr and continue — never abort the routine.
+CAVEAT: options postures are overlays, not directional entry signals (HEDGE on
+LONG = DOWN/reduce lean); the AutoTrader risk core, paper-only mode, and
+per-symbol allowlist are the backstop.
+
+**CRITICAL:** emit the payload ONLY through the Python block below. Fill ONLY
+the raw `postures` list (populated from Step 3d captures); the script does ALL
+field mapping, overlay normalization, symbol qualification, and self-validation.
+Never bypass the script or hand-write JSON. If validation prints a `[warn]`,
+fix the raw inputs and re-run.
+
+**W1. Build and validate the payload:**
+
+```python
+import json, sys, re
+from datetime import datetime, timezone
+
+RUN_ID = '<the same RUN_ID used for the sweep>'  # substitute real value
+
+# Fill from Step 3d per-ticker captures.
+# One entry per ticker where the options overlay ran.
+postures = [
+  # {'ticker':'AAPL','position_bias':'LONG','strategy_outlook':'INCOME','recommended_strategy':'Covered Call'},
+]
+
+# ---- deterministic mapping (DO NOT EDIT below this line) ----
+CA = {'VDY','XEQT','XIC','ZAG'}   # Canadian (TSX) ETFs; everything else US
+MAP = {'BULLISH':('UP',7), 'BEARISH':('DOWN',-7), 'HEDGE':('DOWN',-6), 'INCOME':('UP',6)}  # NEUTRAL/other → skip
+
+def qualify(t):
+    t = str(t).strip().upper()
+    if '.' in t: return t
+    return ('CA.' if t in CA else 'US.') + t
+
+def to_overlay(strategy):
+    s = str(strategy).upper().replace('-', ' ')
+    if 'COVERED CALL' in s:     return 'COVERED_CALL'
+    if 'PROTECTIVE PUT' in s:   return 'PROTECTIVE_PUT'
+    if 'CASH SECURED PUT' in s: return 'CASH_SECURED_PUT'
+    if 'COLLAR' in s:           return 'COLLAR'
+    if 'BULL CALL SPREAD' in s: return 'BULL_CALL_SPREAD'
+    if 'LONG CALL' in s:        return 'LONG_CALL'
+    if 'BEAR PUT SPREAD' in s:  return 'BEAR_PUT_SPREAD'
+    if 'IRON CONDOR' in s:      return 'IRON_CONDOR'
+    if 'CALENDAR SPREAD' in s:  return 'CALENDAR_SPREAD'
+    return re.sub(r'[^A-Z0-9]+', '_', s.split('(')[0]).strip('_')
+
+changes = []
+for p in postures:
+    outlook = str(p['strategy_outlook']).strip().upper()
+    if outlook not in MAP:
+        continue  # NEUTRAL or unknown → not actionable
+    direction, pts = MAP[outlook]
+    rec = str(p['recommended_strategy'])
+    changes.append({
+        'ticker':       qualify(p['ticker']),
+        'direction':    direction,
+        'transition':   [str(p['position_bias']), str(p['strategy_outlook'])],
+        'points_delta': int(pts),
+        'driver':       rec + ' (options overlay)',
+        'overlay':      to_overlay(rec),
+    })
+
+payload = {
+    'routine_id':     RUN_ID,
+    'timestamp':      datetime.now(timezone.utc).strftime('%Y-%m-%dT%H:%M:%S'),
+    'signal_changes': changes,
+    'hard_stops':     {},
+    'catalysts':      [],
+}
+
+errs = []
+if not isinstance(payload['routine_id'], str) or not payload['routine_id']: errs.append('routine_id')
+for i, c in enumerate(changes):
+    if set(c) != {'ticker','direction','transition','points_delta','driver','overlay'}: errs.append('change[%d] keys'%i)
+    if c['direction'] not in ('UP','DOWN'): errs.append('change[%d] direction'%i)
+    if not isinstance(c['points_delta'], int): errs.append('change[%d] points_delta'%i)
+    if not (c['ticker'] and isinstance(c['transition'], list) and len(c['transition'])==2): errs.append('change[%d] ticker/transition'%i)
+    if not c['overlay']: errs.append('change[%d] overlay'%i)
+if errs:
+    print('[warn] step-W validation failed: %s — NOT writing payload, webhook will skip' % errs)
+    sys.exit(0)
+
+open('/tmp/sweep_payload.json', 'w').write(json.dumps(payload, separators=(',', ':')))
+print(json.dumps(payload, indent=2))
+```
+
+**W2. Post a copy of the payload to Slack `#portfolio-updates`.** Only when
+`/tmp/sweep_payload.json` exists. Let J = file contents. If `len(J) ≤ 2800`:
+`slack_send_message` (channel `C0B712ARA7M`, text = `"Signal payload <RUN_ID>:"`
+followed by J in a fenced `json` code block). Else: `slack_create_canvas` (title
+`Signal Payload <RUN_ID>`, content = J) then a one-line `slack_send_message`
+linking the canvas. Slack failure → log `[warn] step-W slack`, non-fatal.
+
+**W3. Trigger the AutoTrader webhook.**
+
+```python
+import json, hmac, hashlib, urllib.request, urllib.error, os, sys
+url    = 'https://unthawed-keshia-unplenteously.ngrok-free.dev'
+secret = 'm9g8WOwRJI3UOfY9SNTAkBGQtY_gFpB-v3OdbVqVVfg'
+if not os.path.exists('/tmp/sweep_payload.json'):
+    print('WEBHOOK_HTTP=skipped: no valid payload'); sys.exit(0)
+body = open('/tmp/sweep_payload.json', 'rb').read()
+try:
+    hz = urllib.request.urlopen(url + '/healthz', timeout=5).read().decode()
+except Exception as e:
+    print('WEBHOOK_HTTP=skipped: tunnel down (' + str(e) + ')'); sys.exit(0)
+if 'ok' not in hz:
+    print('WEBHOOK_HTTP=skipped: healthz not ok'); sys.exit(0)
+sig = 'sha256=' + hmac.new(secret.encode(), body, hashlib.sha256).hexdigest()
+req = urllib.request.Request(url + '/webhook/sweep', data=body, method='POST',
+    headers={'X-Webhook-Token': secret, 'X-Webhook-Signature': sig, 'Content-Type': 'application/json'})
+try:
+    r = urllib.request.urlopen(req, timeout=15)
+    print('WEBHOOK_HTTP=' + str(r.status) + ' ' + r.read().decode())
+except urllib.error.HTTPError as e:
+    print('WEBHOOK_HTTP=' + str(e.code) + ' ' + e.read().decode())
+except Exception as e:
+    print('WEBHOOK_HTTP=error ' + str(e))
+```
+
+Expect `WEBHOOK_HTTP=202`. `400` = invalid payload (response body lists
+offending fields in a `"detail"` array — fix W1 and re-run). `401` = signature
+mismatch. `403` = tunnel host missing from env egress allowlist. ALL non-fatal;
+record the result for Step 3.
+
 **Step 3 — Cloud summary line.** Append one line to the terminal
 summary already printed by the local block:
 
 ```
-  Cloud: slack=<ok|warn>  drive=<ok|warn>  channel=<TARGET_CHANNEL_ID>
+  Cloud: slack=<ok|warn>  drive=<ok|warn>  webhook=<202|skipped|warn>  channel=<TARGET_CHANNEL_ID>
 ```
 
-Use `ok` if the call returned success, `warn` if it failed (the
-preceding stderr warning already explained why).
+Use `ok`/`202` if the call returned success, `warn` if it failed, `skipped` if
+Step W did not run (no options overlay or `--no-options`).
 
 **Different-user note.** If your Slack workspace doesn't contain
 `C0B712ARA7M`, either create a `#portfolio-updates` channel in your
@@ -534,7 +663,10 @@ holdings live somewhere other than InvestmentSummary.
 | Holdings file has > 100 tickers | Warn but continue; the escalation cap protects subagent budget |
 | `--cloud` set, `PINECONE_PROXY_URL`/`PINECONE_PROXY_TOKEN` missing | Warn (see "Pre-flight env check"); continue Slack + Drive delivery |
 | `--cloud` set, Slack send fails (channel not found / rate-limit / token expired / canvas error) | `[warn]` on stderr; continue to Drive step; digest still in CWD |
-| `--cloud` set, Drive upload fails (auth expired / folder missing / quota) | `[warn]` on stderr; continue to cloud-summary line; digest still in CWD |
+| `--cloud` set, Drive upload fails (auth expired / folder missing / quota) | `[warn]` on stderr; continue to Step W; digest still in CWD |
+| Step W validation fails (bad keys / direction / overlay) | `[warn] step-W validation failed: …` on stderr; no payload written; webhook skipped; continue to Step 3 |
+| Step W webhook returns 400 | Log `WEBHOOK_HTTP=400 <detail>`; non-fatal; record `webhook=warn` in Step 3 line |
+| Step W tunnel down / egress blocked (403) | `WEBHOOK_HTTP=skipped: tunnel down` or `error`; non-fatal; record `webhook=skipped` in Step 3 line |
 
 ---
 
