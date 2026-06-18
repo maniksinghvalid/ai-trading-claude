@@ -146,7 +146,30 @@ in the frontmatter.
 - Cash-Secured Put / spreads: size by the risk-budget guidance in "Position
   Sizing for Options" below (1-5% of account); never exceed it.
 - If LONG but `POSITION_SHARES < 100`, covered calls aren't available — fall
-  back to the FLAT row's directional/defined-risk play and say why.
+  back to a **PMCC** (the capital-efficient covered-call substitute; see
+  "Systematic & Capital-Efficient Plays") or, if rounding up to 100 shares is
+  preferred, the FLAT row's directional/defined-risk play. Say which and why.
+
+### Systematic & Capital-Efficient Plays
+
+Two strategies span multiple legs or trades over time, so the one-row tables
+below can't capture them. Recommend them as the PRIMARY when the matrix points
+there, and spell out the full sequence in the report.
+
+**Poor Man's Covered Call (PMCC).** A long-dated, deep-ITM call (~80 delta,
+6–12 months out) stands in for 100 shares; sell a near-term OTM call against it,
+exactly as in a covered call. Far cheaper than buying 100 shares, but it pays no
+dividend and the long call bleeds theta. Rules: the long call's strike must sit
+far enough below the short call that the spread width covers assignment; watch
+early-assignment / ex-dividend risk on the short leg; roll the short call for
+income while holding the long-dated anchor. Use it for LONG names with fewer
+than 100 shares, or to open a bullish position with less capital.
+
+**The Wheel.** A systematic INCOME rotation: sell a cash-secured put on a name
+you'd be content to own → if assigned, take the 100 shares → sell covered calls
+against them → if called away, return to selling cash-secured puts. Best in
+elevated-IV, range-bound, fundamentally-acceptable names. The Cash-Secured Put
+(entry leg) and Covered Call (exit leg) rows give the per-leg risk/reward.
 
 ### Bullish Strategies
 | Strategy | When to Use | Max Profit | Max Loss | Breakeven |
