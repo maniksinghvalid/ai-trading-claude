@@ -502,6 +502,7 @@ Use Python for exact calculations. Approximate probability of profit estimates u
 6. **Honest probability estimates.** Use delta as a rough proxy for probability when exact data is unavailable. Never overstate precision.
 7. **Strategy must match position + signal.** A LONG + CAUTION/AVOID ticker MUST lead with a HEDGE (protective put/collar), never a naked income play that adds downside. A FLAT ticker MUST NOT recommend covered calls. The `strategy_outlook` / `position_bias` frontmatter MUST match the prose.
 8. **Frontmatter honesty.** Omit any frontmatter line whose value is genuinely unavailable rather than writing a placeholder — but `strategy_outlook`, `recommended_strategy`, and `position_bias` are always required (they're decisions, not data lookups).
+9. **Long volatility must be IV-justified.** Long straddles/strangles are premium-buying plays — recommend them only when IV rank is low / very-low (never buy expensive volatility). Short straddle and covered strangle are undefined-risk on at least one side and MUST carry the risk warning required by rule 3.
 
 ## Edge Cases
 
