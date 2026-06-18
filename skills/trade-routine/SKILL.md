@@ -42,6 +42,12 @@ Activates on:
 - `/trade routine --cloud --slack-channel <id>` — overrides the default
   Slack destination (test channel, personal DM channel ID, different
   workspace fork). Drive upload still targets InvestmentSummary.
+- `/trade routine --cloud --autotrader` — after Slack + Drive delivery,
+  fires the AutoTrader webhook (`POST /webhook/sweep`) at the URL in
+  `AUTOTRADER_WEBHOOK_URL` (env var) with the sweep signal payload signed
+  via HMAC-SHA256. Requires `AUTOTRADER_WEBHOOK_URL` and
+  `AUTOTRADER_WEBHOOK_SECRET` to be set; missing either skips the step
+  with a `[warn]`. See "Step W — AutoTrader webhook" below.
 
 ---
 
@@ -62,6 +68,10 @@ Parse the command line for:
   entirely. Default (flag unset): the overlay runs for every analyze-tier
   ticker, naturally bounded by the escalation cap (it only fires where
   analyze fired).
+- `--autotrader` → set `AUTOTRADER_MODE=1`. Only active when `--cloud`
+  is also set. Fires the AutoTrader webhook after Slack + Drive delivery
+  (see "Step W" in the cloud branch). Silently ignored if `--cloud` is
+  not set.
 
 ### P1 — Generate `run_id`
 
@@ -512,6 +522,93 @@ summary already printed by the local block:
 Use `ok` if the call returned success, `warn` if it failed (the
 preceding stderr warning already explained why).
 
+**Step W — AutoTrader webhook** (only when `--autotrader` flag is set)
+
+After Step 3, if `AUTOTRADER_MODE=1`, fire the signal payload to the
+AutoTrader webhook server (`autotrader/signals/webhook.py`).
+
+**Pre-flight:** Check that both `AUTOTRADER_WEBHOOK_URL` and
+`AUTOTRADER_WEBHOOK_SECRET` are set in the environment. If either is
+missing, print:
+`[warn] --autotrader set but AUTOTRADER_WEBHOOK_URL / AUTOTRADER_WEBHOOK_SECRET
+missing; skipping AutoTrader webhook delivery.` and skip this step.
+
+**Build the payload** (`/tmp/sweep_payload.json`):
+```json
+{
+  "run_id": "<RUN_ID>",
+  "sweep_date": "<YYYY-MM-DD>",
+  "generated_at": "<ISO-8601 timestamp with tz>",
+  "ticker_count": <N>,
+  "signal_changes": [ /* only tickers where prior_signal != new_signal */ ],
+  "all_positions": [ /* every ticker with prior/new signal + score + delta */ ],
+  "alerts": {
+    "high_confidence_changes": [ /* entries where abs(delta)/10 >= 0.6 */ ],
+    "risk_flags": [ /* tickers with risk_score < 30 */ ]
+  }
+}
+```
+
+Each position entry shape:
+```json
+{
+  "ticker": "AAPL",
+  "prior_signal": "HOLD",  "new_signal": "BUY",
+  "prior_score": 65,       "new_score": 72,
+  "delta": 7,
+  "confidence": 0.7,        /* abs(delta) / 10 */
+  "signal_changed": true,
+  "above_threshold": true   /* confidence >= 0.6 */
+}
+```
+
+**Sign and POST.** The server (`autotrader/signals/webhook.py`) validates
+two headers using constant-time comparison over the exact bytes received.
+Both headers are **required** — sending only one always returns 401:
+
+```bash
+SECRET="$AUTOTRADER_WEBHOOK_SECRET"
+# Compact JSON — no trailing newline (bash $() strips it automatically)
+BODY=$(python3 -c "import sys,json; print(json.dumps(json.load(sys.stdin), separators=(',',':')))" < /tmp/sweep_payload.json)
+SIG="sha256=$(echo -n "$BODY" | openssl dgst -sha256 -hmac "$SECRET" | awk '{print $2}')"
+
+curl -s -w "\nHTTP %{http_code}" -X POST "$AUTOTRADER_WEBHOOK_URL/webhook/sweep" \
+  -H "Content-Type: application/json" \
+  -H "X-Webhook-Token: $SECRET" \
+  -H "X-Webhook-Signature: $SIG" \
+  -d "$BODY"
+```
+
+**Why two headers?**
+- `X-Webhook-Token` — the raw secret; server uses it to look up the
+  expected signing key per-client.
+- `X-Webhook-Signature` — `sha256=<hex>` HMAC-SHA256 of the **compact**
+  JSON body (no pretty-print, no trailing newline). Server hashes the
+  raw received bytes and compares constant-time; whitespace differences
+  will break the signature.
+
+**Interpret the response:**
+- `HTTP 202` + `{"status":"accepted","signals":<N>}` — success; N is the
+  number of signal entries the server coerced (above-threshold entries
+  that generated AutoTrader actions). Log the response body.
+- `HTTP 401` — both headers missing or HMAC mismatch; print the error and
+  mark as warn.
+- Other 4xx/5xx — non-fatal warn; payload still in `/tmp/sweep_payload.json`.
+
+On any error, print `[warn] AutoTrader webhook failed (<status> <reason>);
+payload at /tmp/sweep_payload.json` and continue. The webhook is
+supplementary and MUST NOT abort the sweep or the cloud delivery.
+
+**Append to the cloud summary line:**
+```
+  Cloud: slack=<ok|warn>  drive=<ok|warn>  autotrader=<ok|warn|skip>  channel=<TARGET_CHANNEL_ID>
+```
+
+`skip` when `--autotrader` was not passed; `ok`/`warn` from the HTTP
+response above.
+
+---
+
 **Different-user note.** If your Slack workspace doesn't contain
 `C0B712ARA7M`, either create a `#portfolio-updates` channel in your
 workspace and update the hardcoded ID at the top of this skill (and
@@ -535,6 +632,9 @@ holdings live somewhere other than InvestmentSummary.
 | `--cloud` set, `PINECONE_PROXY_URL`/`PINECONE_PROXY_TOKEN` missing | Warn (see "Pre-flight env check"); continue Slack + Drive delivery |
 | `--cloud` set, Slack send fails (channel not found / rate-limit / token expired / canvas error) | `[warn]` on stderr; continue to Drive step; digest still in CWD |
 | `--cloud` set, Drive upload fails (auth expired / folder missing / quota) | `[warn]` on stderr; continue to cloud-summary line; digest still in CWD |
+| `--cloud --autotrader` set, `AUTOTRADER_WEBHOOK_URL`/`AUTOTRADER_WEBHOOK_SECRET` missing | `[warn]` on stderr; mark `autotrader=skip` in cloud summary; continue |
+| `--cloud --autotrader` set, webhook returns 401 | Both headers required (`X-Webhook-Token` + `X-Webhook-Signature`); verify secret and that both are sent; `[warn]` + payload at `/tmp/sweep_payload.json` |
+| `--cloud --autotrader` set, webhook returns other 4xx/5xx | `[warn]` on stderr; payload at `/tmp/sweep_payload.json` for manual retry |
 
 ---
 
