@@ -164,13 +164,17 @@ in the frontmatter.
 | Bear Put Spread | Moderate IV + defined target | Width - debit | Debit paid | Long strike - debit |
 | Bear Call Spread | High IV + bearish | Credit received | Width - credit | Short strike + credit |
 
-### Neutral Strategies
+### Neutral & Volatility Strategies
 | Strategy | When to Use | Max Profit | Max Loss | Breakeven |
 |----------|-------------|------------|----------|-----------|
+| Long Straddle | Very low IV + expect big move, direction unknown | Unlimited | Both premiums paid | Strike +/- total premium |
+| Long Strangle | Low IV + expect big move, cheaper than straddle | Unlimited | Both premiums paid | Strikes +/- total premium |
+| Short Straddle | Very high IV + pin expected (undefined risk) | Total credit | Unlimited | Strike +/- credit |
 | Iron Condor | High IV + range-bound | Net credit | Width - credit | Between short strikes +/- credit |
 | Short Strangle | Very high IV + range-bound (undefined risk) | Total credit | Unlimited | Strikes +/- credit |
 | Iron Butterfly | High IV + pinning near strike | Net credit | Width - credit | Center +/- credit |
 | Covered Call | Own shares + high IV | Premium + upside to strike | Stock downside | Purchase price - premium |
+| Covered Strangle | LONG + high IV + range-bound + willing to add shares | Credit + upside to call strike | Stock downside + put assignment | Complex (two breakevens) |
 | Calendar Spread | IV term structure steep | Variable | Net debit | Near short strike at front expiration |
 
 ## Output Format
