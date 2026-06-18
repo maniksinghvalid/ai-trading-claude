@@ -130,11 +130,11 @@ in the frontmatter.
 | Position | Composite signal | IV environment | Primary strategy | `strategy_outlook` | Intent |
 |----------|------------------|----------------|------------------|--------------------|--------|
 | LONG | STRONG BUY / BUY | High IV (rank ≥50) | Covered Call (OTM) | INCOME | grow + income, keep upside room |
-| LONG | STRONG BUY / BUY | Low IV (rank <50) | Hold shares / Call Diagonal | BULLISH | grow, don't cap a cheap-IV runner |
+| LONG | STRONG BUY / BUY | Low IV (rank <50) | Hold / Call Diagonal (≥100 sh) · PMCC (<100 sh) | BULLISH | grow; PMCC is the capital-efficient substitute when share count is small |
 | LONG | HOLD / NEUTRAL | High IV | Covered Call (near-ATM) | INCOME | manage, harvest elevated premium |
 | LONG | HOLD / NEUTRAL | Low IV | Collar (costless-ish) | HEDGE | manage, cheap protection |
 | LONG | CAUTION / AVOID | any | Protective Put or Collar | HEDGE | hedge downside on a weakening name |
-| FLAT | STRONG BUY / BUY | High IV | Cash-Secured Put | INCOME | grow, get paid to enter |
+| FLAT | STRONG BUY / BUY | High IV | Cash-Secured Put → the Wheel | INCOME | grow; systematic CSP→CC income rotation |
 | FLAT | STRONG BUY / BUY | Low IV | Bull Call Spread / Long Call | BULLISH | grow, cheap directional |
 | FLAT | HOLD / NEUTRAL | High IV | Iron Condor / short premium | NEUTRAL | income on range-bound |
 | FLAT | CAUTION / AVOID | any | Bear Put Spread or stand aside | BEARISH | hedge/avoid; defined risk only |
@@ -146,7 +146,30 @@ in the frontmatter.
 - Cash-Secured Put / spreads: size by the risk-budget guidance in "Position
   Sizing for Options" below (1-5% of account); never exceed it.
 - If LONG but `POSITION_SHARES < 100`, covered calls aren't available — fall
-  back to the FLAT row's directional/defined-risk play and say why.
+  back to a **PMCC** (the capital-efficient covered-call substitute; see
+  "Systematic & Capital-Efficient Plays") or, if rounding up to 100 shares is
+  preferred, the FLAT row's directional/defined-risk play. Say which and why.
+
+### Systematic & Capital-Efficient Plays
+
+Two strategies span multiple legs or trades over time, so the one-row tables
+below can't capture them. Recommend them as the PRIMARY when the matrix points
+there, and spell out the full sequence in the report.
+
+**Poor Man's Covered Call (PMCC).** A long-dated, deep-ITM call (~80 delta,
+6–12 months out) stands in for 100 shares; sell a near-term OTM call against it,
+exactly as in a covered call. Far cheaper than buying 100 shares, but it pays no
+dividend and the long call bleeds theta. Rules: the long call's strike must sit
+far enough below the short call that the spread width covers assignment; watch
+early-assignment / ex-dividend risk on the short leg; roll the short call for
+income while holding the long-dated anchor. Use it for LONG names with fewer
+than 100 shares, or to open a bullish position with less capital.
+
+**The Wheel.** A systematic INCOME rotation: sell a cash-secured put on a name
+you'd be content to own → if assigned, take the 100 shares → sell covered calls
+against them → if called away, return to selling cash-secured puts. Best in
+elevated-IV, range-bound, fundamentally-acceptable names. The Cash-Secured Put
+(entry leg) and Covered Call (exit leg) rows give the per-leg risk/reward.
 
 ### Bullish Strategies
 | Strategy | When to Use | Max Profit | Max Loss | Breakeven |
@@ -164,13 +187,17 @@ in the frontmatter.
 | Bear Put Spread | Moderate IV + defined target | Width - debit | Debit paid | Long strike - debit |
 | Bear Call Spread | High IV + bearish | Credit received | Width - credit | Short strike + credit |
 
-### Neutral Strategies
+### Neutral & Volatility Strategies
 | Strategy | When to Use | Max Profit | Max Loss | Breakeven |
 |----------|-------------|------------|----------|-----------|
+| Long Straddle | Very low IV + expect big move, direction unknown | Unlimited | Both premiums paid | Strike +/- total premium |
+| Long Strangle | Low IV + expect big move, cheaper than straddle | Unlimited | Both premiums paid | Strikes +/- total premium |
+| Short Straddle | Very high IV + pin expected (undefined risk) | Total credit | Unlimited | Strike +/- credit |
 | Iron Condor | High IV + range-bound | Net credit | Width - credit | Between short strikes +/- credit |
 | Short Strangle | Very high IV + range-bound (undefined risk) | Total credit | Unlimited | Strikes +/- credit |
 | Iron Butterfly | High IV + pinning near strike | Net credit | Width - credit | Center +/- credit |
 | Covered Call | Own shares + high IV | Premium + upside to strike | Stock downside | Purchase price - premium |
+| Covered Strangle | LONG + high IV + range-bound + willing to add shares (undefined risk on put side) | Credit + upside to call strike | Stock downside + put assignment | Complex (two breakevens) |
 | Calendar Spread | IV term structure steep | Variable | Net debit | Near short strike at front expiration |
 
 ## Output Format
@@ -475,6 +502,7 @@ Use Python for exact calculations. Approximate probability of profit estimates u
 6. **Honest probability estimates.** Use delta as a rough proxy for probability when exact data is unavailable. Never overstate precision.
 7. **Strategy must match position + signal.** A LONG + CAUTION/AVOID ticker MUST lead with a HEDGE (protective put/collar), never a naked income play that adds downside. A FLAT ticker MUST NOT recommend covered calls. The `strategy_outlook` / `position_bias` frontmatter MUST match the prose.
 8. **Frontmatter honesty.** Omit any frontmatter line whose value is genuinely unavailable rather than writing a placeholder — but `strategy_outlook`, `recommended_strategy`, and `position_bias` are always required (they're decisions, not data lookups).
+9. **Long volatility must be IV-justified.** Long straddles/strangles are premium-buying plays — recommend them only when IV rank is low / very-low (never buy expensive volatility). Short straddle and covered strangle are undefined-risk on at least one side and MUST carry the risk warning required by rule 3.
 
 ## Edge Cases
 
