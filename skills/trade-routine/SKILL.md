@@ -510,87 +510,39 @@ CAVEAT: options postures are overlays, not directional entry signals (HEDGE on
 LONG = DOWN/reduce lean); the AutoTrader risk core, paper-only mode, and
 per-symbol allowlist are the backstop.
 
-**CRITICAL:** emit the payload ONLY through the Python block below. Fill ONLY
-the raw `postures` list (populated from Step 3d captures); the script does ALL
-field mapping, overlay normalization, symbol qualification, and self-validation.
-Never bypass the script or hand-write JSON. If validation prints a `[warn]`,
-fix the raw inputs and re-run.
+**CRITICAL:** emit the payload ONLY through the installed builder
+`~/.claude/skills/trade/scripts/build_sweep_payload.py` (the single source of
+truth — same module the cloud routines call; never reimplement its mapping inline
+or hand-write JSON). You fill ONLY the raw `postures` list; the script does ALL
+field mapping, the strategy→`overlay` enum, symbol qualification, `points_delta`,
+and self-validation. If it prints a `[warn]`, fix the raw inputs and re-run.
 
-**W1. Build and validate the payload:**
+**W1. Write the raw postures, then build + validate via the script:**
 
-```python
-import json, sys, re
-from datetime import datetime, timezone
+Substitute the real `RUN_ID` (the same one used for the sweep) and fill one entry
+per ticker where the options overlay ran (omit NEUTRAL tickers — the script skips
+them too):
 
-RUN_ID = '<the same RUN_ID used for the sweep>'  # substitute real value
+```bash
+cat > /tmp/sweep_inputs.json <<'JSON'
+{"postures": [
+  {"ticker":"AAPL","position_bias":"LONG","strategy_outlook":"INCOME","recommended_strategy":"Covered Call"}
+]}
+JSON
 
-# Fill from Step 3d per-ticker captures.
-# One entry per ticker where the options overlay ran.
-postures = [
-  # {'ticker':'AAPL','position_bias':'LONG','strategy_outlook':'INCOME','recommended_strategy':'Covered Call'},
-]
-
-# ---- deterministic mapping (DO NOT EDIT below this line) ----
-CA = {'VDY','XEQT','XIC','ZAG'}   # Canadian (TSX) ETFs; everything else US
-MAP = {'BULLISH':('UP',7), 'BEARISH':('DOWN',-7), 'HEDGE':('DOWN',-6), 'INCOME':('UP',6)}  # NEUTRAL/other → skip
-
-def qualify(t):
-    t = str(t).strip().upper()
-    if '.' in t: return t
-    return ('CA.' if t in CA else 'US.') + t
-
-def to_overlay(strategy):
-    s = str(strategy).upper().replace('-', ' ')
-    if 'COVERED CALL' in s:     return 'COVERED_CALL'
-    if 'PROTECTIVE PUT' in s:   return 'PROTECTIVE_PUT'
-    if 'CASH SECURED PUT' in s: return 'CASH_SECURED_PUT'
-    if 'COLLAR' in s:           return 'COLLAR'
-    if 'BULL CALL SPREAD' in s: return 'BULL_CALL_SPREAD'
-    if 'LONG CALL' in s:        return 'LONG_CALL'
-    if 'BEAR PUT SPREAD' in s:  return 'BEAR_PUT_SPREAD'
-    if 'IRON CONDOR' in s:      return 'IRON_CONDOR'
-    if 'CALENDAR SPREAD' in s:  return 'CALENDAR_SPREAD'
-    return re.sub(r'[^A-Z0-9]+', '_', s.split('(')[0]).strip('_')
-
-changes = []
-for p in postures:
-    outlook = str(p['strategy_outlook']).strip().upper()
-    if outlook not in MAP:
-        continue  # NEUTRAL or unknown → not actionable
-    direction, pts = MAP[outlook]
-    rec = str(p['recommended_strategy'])
-    changes.append({
-        'ticker':       qualify(p['ticker']),
-        'direction':    direction,
-        'transition':   [str(p['position_bias']), str(p['strategy_outlook'])],
-        'points_delta': int(pts),
-        'driver':       rec + ' (options overlay)',
-        'overlay':      to_overlay(rec),
-    })
-
-payload = {
-    'routine_id':     RUN_ID,
-    'timestamp':      datetime.now(timezone.utc).strftime('%Y-%m-%dT%H:%M:%S'),
-    'signal_changes': changes,
-    'hard_stops':     {},
-    'catalysts':      [],
-}
-
-errs = []
-if not isinstance(payload['routine_id'], str) or not payload['routine_id']: errs.append('routine_id')
-for i, c in enumerate(changes):
-    if set(c) != {'ticker','direction','transition','points_delta','driver','overlay'}: errs.append('change[%d] keys'%i)
-    if c['direction'] not in ('UP','DOWN'): errs.append('change[%d] direction'%i)
-    if not isinstance(c['points_delta'], int): errs.append('change[%d] points_delta'%i)
-    if not (c['ticker'] and isinstance(c['transition'], list) and len(c['transition'])==2): errs.append('change[%d] ticker/transition'%i)
-    if not c['overlay']: errs.append('change[%d] overlay'%i)
-if errs:
-    print('[warn] step-W validation failed: %s — NOT writing payload, webhook will skip' % errs)
-    sys.exit(0)
-
-open('/tmp/sweep_payload.json', 'w').write(json.dumps(payload, separators=(',', ':')))
-print(json.dumps(payload, indent=2))
+python3 ~/.claude/skills/trade/scripts/build_sweep_payload.py options \
+    --run-id "<RUN_ID>" --in /tmp/sweep_inputs.json --out /tmp/sweep_payload.json
 ```
+
+The script writes `/tmp/sweep_payload.json` ONLY when the payload passes
+validation; on failure it prints `[warn] step-W validation failed: …`, writes
+nothing (so W3 skips), and exits 0 — non-fatal. A `[warn] step-W: N posture(s)
+skipped` line is expected and fine: those strategies name no AutoTrader-executable
+overlay (Hold/Accumulate, Cash-Secured Put, Iron Condor, …) and are dropped rather
+than shipped without a valid `overlay` enum. (`overlay` must be one of the six in
+`domain.OverlayType`; the mapping mirrors AutoTrader `coerce.derive_overlay`, incl.
+PMCC → `CALL_DIAGONAL`. INCOME → `points_delta` 6 so income overlays clear the 0.6
+confidence gate.)
 
 **W2. Post a copy of the payload to Slack `#portfolio-updates`.** Only when
 `/tmp/sweep_payload.json` exists. Let J = file contents. If `len(J) ≤ 2800`:
