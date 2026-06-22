@@ -47,6 +47,7 @@ from __future__ import annotations
 
 import argparse
 import json
+import math
 import sys
 from datetime import datetime, timezone
 from typing import Any, Dict, List, Optional, Tuple
@@ -163,6 +164,34 @@ def build_sweep_changes(rows: List[Dict[str, Any]]) -> List[Dict[str, Any]]:
     return changes
 
 
+def build_portfolio_targets(rows: List[Dict[str, Any]]) -> Tuple[List[Dict[str, Any]], List[str]]:
+    """Map ticker-sweep rows to renormalizable weight targets for the rebalancer.
+    Full-book: every non-exit holding carrying a finite, positive composite score
+    becomes a target (BUY / STRONG BUY / HOLD / NEUTRAL alike). Exit labels
+    (CAUTION / AVOID / SELL) are excluded — the DOWN signal-change path handles
+    those. Rows without a usable score (e.g. quick-tier, which emits no score) are
+    skipped and reported. Dedup by qualified symbol, last row wins. The receiver
+    renormalizes raw scores into weights, so no scaling/clamping happens here.
+    Returns (targets, skipped_tickers)."""
+    by_symbol: Dict[str, float] = {}
+    skipped: List[str] = []
+    for r in rows:
+        label = str(r.get("new_signal", "")).strip().upper()
+        if label in SELL_LABELS:
+            continue  # exit — never a target
+        try:
+            score = float(r.get("new_score"))
+        except (TypeError, ValueError):
+            skipped.append(str(r.get("ticker")))
+            continue
+        if not math.isfinite(score) or score <= 0:
+            skipped.append(str(r.get("ticker")))
+            continue
+        by_symbol[qualify(r.get("ticker"))] = score  # last row wins on duplicate
+    targets = [{"symbol": s, "score": v} for s, v in by_symbol.items()]
+    return targets, skipped
+
+
 def build_hard_stops(stops: List[Dict[str, Any]]) -> Dict[str, float]:
     out: Dict[str, float] = {}
     for s in stops:
@@ -206,6 +235,13 @@ def validate(payload: Dict[str, Any], change_keys: set) -> List[str]:
     for i, c in enumerate(payload.get("catalysts", [])):
         if set(c) != {"ticker", "event", "date", "value"} or not isinstance(c.get("value"), float):
             errs.append("catalyst[%d]" % i)
+    for i, t in enumerate(payload.get("portfolio_targets", [])):
+        if not isinstance(t, dict) or set(t) != {"symbol", "score"}:
+            errs.append("target[%d] keys" % i)
+        elif not (isinstance(t.get("symbol"), str) and t["symbol"]):
+            errs.append("target[%d] symbol" % i)
+        elif isinstance(t.get("score"), bool) or not isinstance(t.get("score"), (int, float)):
+            errs.append("target[%d] score" % i)
     return errs
 
 
@@ -227,10 +263,15 @@ def build_payload(mode: str, run_id: str, raw: Dict[str, Any],
                    "signal_changes": changes, "hard_stops": {}, "catalysts": []}
         change_keys = OPTIONS_CHANGE_KEYS
     elif mode == "sweep":
+        targets, t_skipped = build_portfolio_targets(raw.get("rows", []))
+        if t_skipped:
+            warnings.append("step-W: %d target(s) skipped — no usable score: %s"
+                            % (len(t_skipped), ", ".join(t_skipped)))
         payload = {"routine_id": run_id, "timestamp": ts,
                    "signal_changes": build_sweep_changes(raw.get("rows", [])),
                    "hard_stops": build_hard_stops(raw.get("stops", [])),
-                   "catalysts": build_catalysts(raw.get("catalysts", []))}
+                   "catalysts": build_catalysts(raw.get("catalysts", [])),
+                   "portfolio_targets": targets}
         change_keys = SWEEP_CHANGE_KEYS
     else:
         raise ValueError("unknown mode %r (expected 'options' or 'sweep')" % mode)

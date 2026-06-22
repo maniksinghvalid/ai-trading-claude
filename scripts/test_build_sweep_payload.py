@@ -98,6 +98,78 @@ def test_sweep_mode_no_overlay_plus_stops_catalysts():
     assert {c["ticker"] for c in p["catalysts"]} == {"US.O", "CA.VDY"}  # multi-symbol split + qualified
 
 
+def test_sweep_emits_portfolio_targets():
+    raw = {"rows": [
+        {"ticker": "DIVO", "prior_signal": "HOLD", "new_signal": "BUY", "new_score": 71},
+        {"ticker": "O", "prior_signal": "HOLD", "new_signal": "HOLD", "new_score": 55},
+        {"ticker": "IAU", "prior_signal": "NEUTRAL", "new_signal": "NEUTRAL", "new_score": 41},
+        {"ticker": "YNVDA", "prior_signal": "HOLD", "new_signal": "AVOID", "new_score": 22},   # exit -> excluded
+        {"ticker": "SPCE", "prior_signal": "HOLD", "new_signal": "BUY"},                       # no score -> skipped+warned
+    ]}
+    p, errs, warns = b.build_payload("sweep", "routine-20260622-1455-abc123", raw, timestamp=TS)
+    assert errs == [], errs
+    tg = {t["symbol"]: t["score"] for t in p["portfolio_targets"]}
+    assert tg == {"US.DIVO": 71.0, "US.O": 55.0, "US.IAU": 41.0}      # BUY+HOLD+NEUTRAL; AVOID + no-score excluded
+    assert all(isinstance(v, float) for v in tg.values())
+    assert any("target(s) skipped" in w for w in warns)               # SPCE reported
+
+
+def test_sweep_targets_dedup_and_qualify():
+    raw = {"rows": [
+        {"ticker": "vdy", "new_signal": "BUY", "new_score": 60},      # CA. qualified, lowercased
+        {"ticker": "US.AAPL", "new_signal": "HOLD", "new_score": 50},  # already qualified
+        {"ticker": "AAPL", "new_signal": "BUY", "new_score": 90},      # dup of US.AAPL -> last wins
+    ]}
+    p, _, _ = b.build_payload("sweep", "routine-20260622-1455-abc123", raw, timestamp=TS)
+    tg = {t["symbol"]: t["score"] for t in p["portfolio_targets"]}
+    assert tg == {"CA.VDY": 60.0, "US.AAPL": 90.0}
+
+
+def test_sweep_empty_when_no_scored_rows():
+    raw = {"rows": [
+        {"ticker": "YNVDA", "new_signal": "AVOID", "new_score": 22},   # exit
+        {"ticker": "SPCE", "new_signal": "BUY"},                       # no score
+        {"ticker": "ZAG", "new_signal": "HOLD", "new_score": 0},       # score <= 0
+    ]}
+    p, errs, _ = b.build_payload("sweep", "routine-20260622-1455-abc123", raw, timestamp=TS)
+    assert errs == []
+    assert p["portfolio_targets"] == []
+
+
+def test_options_mode_has_no_portfolio_targets():
+    p, errs, _ = _payload("options", {"postures": [
+        {"ticker": "AAPL", "position_bias": "LONG", "strategy_outlook": "INCOME", "recommended_strategy": "Covered Call"},
+    ]})
+    assert errs == []
+    assert "portfolio_targets" not in p
+
+
+def test_validate_rejects_bad_target_score():
+    payload = {"routine_id": "routine-x", "timestamp": TS, "signal_changes": [],
+               "hard_stops": {}, "catalysts": [],
+               "portfolio_targets": [{"symbol": "US.AAPL", "score": "high"}]}
+    errs = b.validate(payload, b.SWEEP_CHANGE_KEYS)
+    assert any("target[0] score" in e for e in errs), errs
+
+
+def test_validate_rejects_bool_target_score():
+    payload = {"routine_id": "routine-x", "timestamp": TS, "signal_changes": [],
+               "hard_stops": {}, "catalysts": [],
+               "portfolio_targets": [{"symbol": "US.AAPL", "score": True}]}  # bool is not a real score
+    assert any("target[0] score" in e for e in b.validate(payload, b.SWEEP_CHANGE_KEYS))
+
+
+def test_validate_rejects_bad_target_keys_and_symbol():
+    extra = {"routine_id": "routine-x", "timestamp": TS, "signal_changes": [],
+             "hard_stops": {}, "catalysts": [],
+             "portfolio_targets": [{"symbol": "US.AAPL", "score": 80.0, "x": 1}]}
+    assert any("target[0] keys" in e for e in b.validate(extra, b.SWEEP_CHANGE_KEYS))
+    empty_sym = {"routine_id": "routine-x", "timestamp": TS, "signal_changes": [],
+                 "hard_stops": {}, "catalysts": [],
+                 "portfolio_targets": [{"symbol": "", "score": 80.0}]}
+    assert any("target[0] symbol" in e for e in b.validate(empty_sym, b.SWEEP_CHANGE_KEYS))
+
+
 def main():
     tests = [v for k, v in sorted(globals().items()) if k.startswith("test_") and callable(v)]
     for t in tests:
