@@ -235,6 +235,13 @@ def validate(payload: Dict[str, Any], change_keys: set) -> List[str]:
     for i, c in enumerate(payload.get("catalysts", [])):
         if set(c) != {"ticker", "event", "date", "value"} or not isinstance(c.get("value"), float):
             errs.append("catalyst[%d]" % i)
+    for i, t in enumerate(payload.get("portfolio_targets", [])):
+        if not isinstance(t, dict) or set(t) != {"symbol", "score"}:
+            errs.append("target[%d] keys" % i)
+        elif not (isinstance(t.get("symbol"), str) and t["symbol"]):
+            errs.append("target[%d] symbol" % i)
+        elif isinstance(t.get("score"), bool) or not isinstance(t.get("score"), (int, float)):
+            errs.append("target[%d] score" % i)
     return errs
 
 

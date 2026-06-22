@@ -144,6 +144,32 @@ def test_options_mode_has_no_portfolio_targets():
     assert "portfolio_targets" not in p
 
 
+def test_validate_rejects_bad_target_score():
+    payload = {"routine_id": "routine-x", "timestamp": TS, "signal_changes": [],
+               "hard_stops": {}, "catalysts": [],
+               "portfolio_targets": [{"symbol": "US.AAPL", "score": "high"}]}
+    errs = b.validate(payload, b.SWEEP_CHANGE_KEYS)
+    assert any("target[0] score" in e for e in errs), errs
+
+
+def test_validate_rejects_bool_target_score():
+    payload = {"routine_id": "routine-x", "timestamp": TS, "signal_changes": [],
+               "hard_stops": {}, "catalysts": [],
+               "portfolio_targets": [{"symbol": "US.AAPL", "score": True}]}  # bool is not a real score
+    assert any("target[0] score" in e for e in b.validate(payload, b.SWEEP_CHANGE_KEYS))
+
+
+def test_validate_rejects_bad_target_keys_and_symbol():
+    extra = {"routine_id": "routine-x", "timestamp": TS, "signal_changes": [],
+             "hard_stops": {}, "catalysts": [],
+             "portfolio_targets": [{"symbol": "US.AAPL", "score": 80.0, "x": 1}]}
+    assert any("target[0] keys" in e for e in b.validate(extra, b.SWEEP_CHANGE_KEYS))
+    empty_sym = {"routine_id": "routine-x", "timestamp": TS, "signal_changes": [],
+                 "hard_stops": {}, "catalysts": [],
+                 "portfolio_targets": [{"symbol": "", "score": 80.0}]}
+    assert any("target[0] symbol" in e for e in b.validate(empty_sym, b.SWEEP_CHANGE_KEYS))
+
+
 def main():
     tests = [v for k, v in sorted(globals().items()) if k.startswith("test_") and callable(v)]
     for t in tests:
