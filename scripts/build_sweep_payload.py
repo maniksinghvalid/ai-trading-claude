@@ -19,9 +19,13 @@ Two modes, mirroring the two sweep types:
              {ticker, position_bias, strategy_outlook, recommended_strategy}.
              Emits changes carrying an `overlay` enum (HEDGE/INCOME/BULLISH/BEARISH
              → direction+points; recommended_strategy → overlay via to_overlay()).
-  sweep    — directional equity signals. Input `{"rows": [...], "stops": [...],
-             "catalysts": [...]}`. Emits changes WITHOUT overlay (these are equity
-             signals, not options instructions), plus hard_stops and catalysts.
+  sweep    — directional equity signals. Input `{"rows": [...], "holdings": [...],
+             "stops": [...], "catalysts": [...]}`. Emits changes WITHOUT overlay
+             (these are equity signals, not options instructions), plus hard_stops,
+             catalysts, and portfolio_targets. `rows` is CHANGED-ONLY (drives the
+             signal_changes the trader acts on); `holdings` is the FULL BOOK (drives
+             portfolio_targets so the rebalancer renormalizes across every position).
+             When `holdings` is omitted, portfolio_targets fall back to `rows`.
 
 Contract notes (keep in lockstep with AutoTrader `autotrader/signals/`):
   - `overlay` MUST be one of domain.OverlayType; the six in VALID_OVERLAYS. A change
@@ -263,7 +267,14 @@ def build_payload(mode: str, run_id: str, raw: Dict[str, Any],
                    "signal_changes": changes, "hard_stops": {}, "catalysts": []}
         change_keys = OPTIONS_CHANGE_KEYS
     elif mode == "sweep":
-        targets, t_skipped = build_portfolio_targets(raw.get("rows", []))
+        # signal_changes derive from `rows` (changed-only, so the trader acts on
+        # transitions). portfolio_targets need the FULL book, so they read a
+        # separate `holdings` list when present; absent it, fall back to `rows`
+        # (back-compat for callers not yet sending the full book).
+        book = raw.get("holdings")
+        if book is None:
+            book = raw.get("rows", [])
+        targets, t_skipped = build_portfolio_targets(book)
         if t_skipped:
             warnings.append("step-W: %d target(s) skipped — no usable score: %s"
                             % (len(t_skipped), ", ".join(t_skipped)))
