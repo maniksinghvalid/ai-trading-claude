@@ -114,6 +114,40 @@ def test_sweep_emits_portfolio_targets():
     assert any("target(s) skipped" in w for w in warns)               # SPCE reported
 
 
+def test_sweep_holdings_input_drives_targets_separately_from_rows():
+    """rows stays changed-only (→ signal_changes); a separate full-book `holdings`
+    list drives portfolio_targets, so the rebalancer sees every position — not only
+    the ones that flipped this sweep. This is the split that lets the cloud routine
+    emit a full-book target set without re-firing signals for unchanged holdings."""
+    raw = {
+        "rows": [  # changed-only: only DIVO flipped this sweep
+            {"ticker": "DIVO", "prior_signal": "HOLD", "new_signal": "BUY", "new_score": 71},
+        ],
+        "holdings": [  # full book: every held position with its current score
+            {"ticker": "DIVO", "new_signal": "BUY", "new_score": 71},
+            {"ticker": "O", "new_signal": "HOLD", "new_score": 55},
+            {"ticker": "IAU", "new_signal": "NEUTRAL", "new_score": 41},
+            {"ticker": "SPCE", "new_signal": "AVOID", "new_score": 22},  # exit -> excluded
+        ],
+    }
+    p, errs, _ = b.build_payload("sweep", "routine-20260625-0500-aa11bb", raw, timestamp=TS)
+    assert errs == [], errs
+    assert {c["ticker"] for c in p["signal_changes"]} == {"US.DIVO"}        # from rows (changed-only)
+    tg = {t["symbol"]: t["score"] for t in p["portfolio_targets"]}
+    assert tg == {"US.DIVO": 71.0, "US.O": 55.0, "US.IAU": 41.0}            # from holdings (full book, minus exit)
+
+
+def test_sweep_targets_fall_back_to_rows_when_no_holdings():
+    """Back-compat: with no `holdings` key, portfolio_targets still derive from rows
+    (prior behavior preserved for callers not yet updated to send the full book)."""
+    raw = {"rows": [
+        {"ticker": "DIVO", "new_signal": "BUY", "new_score": 71},
+        {"ticker": "O", "new_signal": "HOLD", "new_score": 55},
+    ]}
+    p, _, _ = b.build_payload("sweep", "routine-20260625-0500-aa11bb", raw, timestamp=TS)
+    assert {t["symbol"] for t in p["portfolio_targets"]} == {"US.DIVO", "US.O"}
+
+
 def test_sweep_targets_dedup_and_qualify():
     raw = {"rows": [
         {"ticker": "vdy", "new_signal": "BUY", "new_score": 60},      # CA. qualified, lowercased
