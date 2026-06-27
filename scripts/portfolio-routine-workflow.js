@@ -21,16 +21,26 @@ export const meta = {
 //                    only injection point. NEVER hardcode these tokens in this file.
 // All have fallbacks so the script can also be test-invoked without args.
 
-const RUN_ID      = (args && args.run_id)     ? args.run_id     : 'routine-unknown'
-const DATE        = (args && args.date)       ? args.date       : '1970-01-01'
-const DATE_LABEL  = (args && args.dateLabel)  ? args.dateLabel  : DATE
-const DIGEST_FILE = (args && args.digestFile) ? args.digestFile : ('TRADE-ROUTINE-' + DATE.replace(/-/g,'') + '.md')
-const PRIORS      = (args && args.priors)     ? args.priors     : {}
+// The Workflow runtime delivers `args` as a JSON STRING (harness serialization),
+// not a parsed object — verified empirically. Without this normalize, every field
+// below falls through to its default (run_id 'routine-unknown', empty secrets → the
+// recall + webhook auth fail). Handle both string and object, and a missing arg.
+const ARGS = (() => {
+  let a = args
+  if (typeof a === 'string') { try { a = JSON.parse(a) } catch (_e) { a = {} } }
+  return (a && typeof a === 'object') ? a : {}
+})()
+
+const RUN_ID      = ARGS.run_id     ? ARGS.run_id     : 'routine-unknown'
+const DATE        = ARGS.date       ? ARGS.date       : '1970-01-01'
+const DATE_LABEL  = ARGS.dateLabel  ? ARGS.dateLabel  : DATE
+const DIGEST_FILE = ARGS.digestFile ? ARGS.digestFile : ('TRADE-ROUTINE-' + DATE.replace(/-/g,'') + '.md')
+const PRIORS      = ARGS.priors     ? ARGS.priors     : {}
 
 const CWD = '/home/user/ai-trading-claude'
 // Secrets injected via args.secrets (see header). Non-secret URLs keep a default;
 // the three tokens default to '' and MUST be supplied by the routine prompt at runtime.
-const SECRETS        = (args && args.secrets) || {}
+const SECRETS        = ARGS.secrets || {}
 const PROXY_URL      = SECRETS.pineconeProxyUrl   || 'https://www.mga-pservices.cloud'
 const PROXY_TOKEN    = SECRETS.pineconeProxyToken || ''
 const VERCEL_BYPASS  = SECRETS.vercelBypass       || ''
