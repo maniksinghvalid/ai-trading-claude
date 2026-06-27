@@ -12,7 +12,13 @@ export const meta = {
 // args.date       — e.g. '2026-06-27'
 // args.dateLabel  — e.g. 'June 27, 2026'
 // args.digestFile — e.g. 'TRADE-ROUTINE-20260627-0500.md'
-// args.priors     — { CLOV: 'HOLD', DIVO: 'BUY', ... } (prior signals per ticker)
+// args.priors     — { CLOV: 'HOLD', DIVO: 'BUY', ... } (prior signals per ticker;
+//                    used as FALLBACK only — STEP 0 recalls the authoritative prior
+//                    signal/score per ticker from Pinecone and that wins when present)
+// args.secrets    — { pineconeProxyToken, vercelBypass, webhookSecret, pineconeProxyUrl?, webhookUrl? }
+//                    injected at runtime by the routine prompt (held in RemoteTrigger config,
+//                    NOT committed). The workflow runtime has no process.env, so args is the
+//                    only injection point. NEVER hardcode these tokens in this file.
 // All have fallbacks so the script can also be test-invoked without args.
 
 const RUN_ID      = (args && args.run_id)     ? args.run_id     : 'routine-unknown'
@@ -22,9 +28,18 @@ const DIGEST_FILE = (args && args.digestFile) ? args.digestFile : ('TRADE-ROUTIN
 const PRIORS      = (args && args.priors)     ? args.priors     : {}
 
 const CWD = '/home/user/ai-trading-claude'
-const PINECONE_ENV = `export PINECONE_PROXY_URL='https://www.mga-pservices.cloud'
-export PINECONE_PROXY_TOKEN='88b1c18422f697855c9761457363c4ed62f6e934bd76b17d460919cd51137d50'
-export VERCEL_PROTECTION_BYPASS='2j5xvsJXIdjqO7SnLunMfTFB4H3XpRT2'
+// Secrets injected via args.secrets (see header). Non-secret URLs keep a default;
+// the three tokens default to '' and MUST be supplied by the routine prompt at runtime.
+const SECRETS        = (args && args.secrets) || {}
+const PROXY_URL      = SECRETS.pineconeProxyUrl   || 'https://www.mga-pservices.cloud'
+const PROXY_TOKEN    = SECRETS.pineconeProxyToken || ''
+const VERCEL_BYPASS  = SECRETS.vercelBypass       || ''
+const WEBHOOK_URL    = SECRETS.webhookUrl         || 'https://unthawed-keshia-unplenteously.ngrok-free.dev'
+const WEBHOOK_SECRET = SECRETS.webhookSecret      || ''
+
+const PINECONE_ENV = `export PINECONE_PROXY_URL='${PROXY_URL}'
+export PINECONE_PROXY_TOKEN='${PROXY_TOKEN}'
+export VERCEL_PROTECTION_BYPASS='${VERCEL_BYPASS}'
 export TRADE_RUN_ID='${RUN_ID}'
 cd /home/user/ai-trading-claude`
 
@@ -65,6 +80,9 @@ const ANALYSIS_SCHEMA = {
     stop_loss:             {type:['number','null']},
     nearest_catalyst_date: {type:['string','null']},
     nearest_catalyst_event:{type:['string','null']},
+    memory_hit:            {type:'boolean'},
+    prior_signal_recalled: {type:['string','null']},
+    prior_score_recalled:  {type:['number','null']},
     file_written:          {type:'boolean'},
     ingest_ok:             {type:'boolean'},
     analysis_summary:      {type:'string'},
@@ -87,8 +105,20 @@ function buildAnalysisPrompt(h) {
 
   return `You are running a comprehensive 5-dimension trade analysis for ${h.ticker} (${h.company}) as part of the daily portfolio routine on ${DATE_LABEL}.${caNote}${nvdyNote}
 
-PRIOR SIGNAL: ${h.prior}
+PRIOR SIGNAL (caller-provided, last known): ${h.prior}
 ANALYSIS DATE: ${DATE_LABEL}
+
+=== STEP 0: RECALL PRIOR ANALYSIS FROM PINECONE (memory seed — do this FIRST, before searching) ===
+Pull this ticker's most recent prior ANALYSIS record from vector memory so today's review is continuity-aware:
+\`\`\`bash
+${PINECONE_ENV}
+python3 ~/.claude/skills/trade/scripts/trade_memory.py latest ${h.ticker} --type ANALYSIS 2>/dev/null | tail -40
+\`\`\`
+Interpret the output:
+- A record with composite_score + signal + grade + generated_at (and maybe a thesis/summary) → a prior analysis EXISTS. Note its score, signal, grade, and date. Set memory_hit=true, prior_signal_recalled=<that signal>, prior_score_recalled=<that composite_score>.
+- Empty output, "no records"/"not found", or an error (e.g. proxy 403 host_not_allowed → memory unavailable) → NO usable prior. Set memory_hit=false, prior_signal_recalled=null, prior_score_recalled=null, and proceed as a fresh first-time analysis.
+
+Use any recalled prior as CONTEXT, not an anchor: today's web data governs the score, but (a) carry forward durable thesis points that are still valid, and (b) if your new signal diverges materially from a RECENT prior, say so in the body and explain what changed (new catalyst, price move, fundamentals). A large unexplained swing from a recent prior means re-check your inputs.
 
 === STEP 1: GATHER DATA (use WebSearch) ===
 Run 2-3 searches to find:
@@ -199,6 +229,7 @@ python3 ~/.claude/skills/trade/scripts/trade_memory.py ingest TRADE-ANALYSIS-${h
 === STEP 6: RETURN STRUCTURED RESULT ===
 Return structured JSON with all scores, signal, grade, current_price, stop_loss, nearest_catalyst_date, nearest_catalyst_event.
 Set file_written=true if Write tool succeeded, ingest_ok=true if ingest returned exit code 0.
+Also include the STEP 0 memory fields: memory_hit (true/false), and prior_signal_recalled / prior_score_recalled (the recalled prior's signal and composite score when memory_hit=true, else null).
 
 Today is ${DATE_LABEL}. Use only real data from web searches.
 DISCLAIMER: Educational and research purposes only. Not financial advice.`
@@ -218,6 +249,8 @@ const rawAnalyses = await parallel(HOLDINGS.map(h => () =>
 
 const analyses = rawAnalyses.filter(Boolean)
 log(analyses.length + '/14 analyses completed')
+const memorySeeded = analyses.filter(a => a.memory_hit).length
+log(memorySeeded + '/' + analyses.length + ' analyses seeded with a prior Pinecone record (memory hit)')
 
 if (analyses.length === 0) {
   return {error: 'All 14 analyses failed — nothing to deliver'}
@@ -231,7 +264,9 @@ phase('Deliver')
 
 const analysisSummary = analyses.map(a => ({
   ticker:                a.ticker,
-  prior_signal:          priorByTicker[a.ticker] || 'UNKNOWN',
+  prior_signal:          a.prior_signal_recalled || priorByTicker[a.ticker] || 'NEUTRAL',
+  prior_score:           (a.prior_score_recalled ?? null),
+  memory_hit:            a.memory_hit || false,
   new_signal:            a.signal,
   composite_score:       a.composite_score,
   grade:                 a.grade,
@@ -264,9 +299,9 @@ Rules:
 
 === STEP 2: RUN build_sweep_payload.py ===
 \`\`\`bash
-export PINECONE_PROXY_URL='https://www.mga-pservices.cloud'
-export PINECONE_PROXY_TOKEN='88b1c18422f697855c9761457363c4ed62f6e934bd76b17d460919cd51137d50'
-export VERCEL_PROTECTION_BYPASS='2j5xvsJXIdjqO7SnLunMfTFB4H3XpRT2'
+export PINECONE_PROXY_URL='${PROXY_URL}'
+export PINECONE_PROXY_TOKEN='${PROXY_TOKEN}'
+export VERCEL_PROTECTION_BYPASS='${VERCEL_BYPASS}'
 python3 /home/user/ai-trading-claude/scripts/build_sweep_payload.py sweep \\
   --run-id ${RUN_ID} \\
   --in /tmp/sweep_inputs.json \\
@@ -285,7 +320,7 @@ If JSON > 3000 chars: use mcp__Slack__slack_create_canvas (title="Sweep Payload 
 === STEP 4: FIRE AUTOTRADER WEBHOOK ===
 Sign and POST with TWO headers (X-Webhook-Token AND X-Webhook-Signature):
 \`\`\`bash
-SECRET='m9g8WOwRJI3UOfY9SNTAkBGQtY_gFpB-v3OdbVqVVfg'
+SECRET='${WEBHOOK_SECRET}'
 SIG="sha256=$(openssl dgst -sha256 -hmac "$SECRET" < /tmp/sweep_payload.json | awk '{print $2}')"
 HTTP_CODE=$(curl -s -o /tmp/webhook_response.txt -w "%{http_code}" \\
   -X POST \\
@@ -293,7 +328,7 @@ HTTP_CODE=$(curl -s -o /tmp/webhook_response.txt -w "%{http_code}" \\
   -H "X-Webhook-Token: \${SECRET}" \\
   -H "X-Webhook-Signature: \${SIG}" \\
   --data-binary @/tmp/sweep_payload.json \\
-  https://unthawed-keshia-unplenteously.ngrok-free.dev/webhook/sweep)
+  ${WEBHOOK_URL}/webhook/sweep)
 echo "HTTP: \${HTTP_CODE}"
 cat /tmp/webhook_response.txt
 \`\`\`
