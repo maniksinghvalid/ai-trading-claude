@@ -15,6 +15,10 @@ export const meta = {
 // args.priors     — { CLOV: 'HOLD', DIVO: 'BUY', ... } (prior signals per ticker;
 //                    used as FALLBACK only — STEP 0 recalls the authoritative prior
 //                    signal/score per ticker from Pinecone and that wins when present)
+// args.secrets    — { pineconeProxyToken, vercelBypass, webhookSecret, pineconeProxyUrl?, webhookUrl? }
+//                    injected at runtime by the routine prompt (held in RemoteTrigger config,
+//                    NOT committed). The workflow runtime has no process.env, so args is the
+//                    only injection point. NEVER hardcode these tokens in this file.
 // All have fallbacks so the script can also be test-invoked without args.
 
 const RUN_ID      = (args && args.run_id)     ? args.run_id     : 'routine-unknown'
@@ -24,9 +28,18 @@ const DIGEST_FILE = (args && args.digestFile) ? args.digestFile : ('TRADE-ROUTIN
 const PRIORS      = (args && args.priors)     ? args.priors     : {}
 
 const CWD = '/home/user/ai-trading-claude'
-const PINECONE_ENV = `export PINECONE_PROXY_URL='https://www.mga-pservices.cloud'
-export PINECONE_PROXY_TOKEN='88b1c18422f697855c9761457363c4ed62f6e934bd76b17d460919cd51137d50'
-export VERCEL_PROTECTION_BYPASS='2j5xvsJXIdjqO7SnLunMfTFB4H3XpRT2'
+// Secrets injected via args.secrets (see header). Non-secret URLs keep a default;
+// the three tokens default to '' and MUST be supplied by the routine prompt at runtime.
+const SECRETS        = (args && args.secrets) || {}
+const PROXY_URL      = SECRETS.pineconeProxyUrl   || 'https://www.mga-pservices.cloud'
+const PROXY_TOKEN    = SECRETS.pineconeProxyToken || ''
+const VERCEL_BYPASS  = SECRETS.vercelBypass       || ''
+const WEBHOOK_URL    = SECRETS.webhookUrl         || 'https://unthawed-keshia-unplenteously.ngrok-free.dev'
+const WEBHOOK_SECRET = SECRETS.webhookSecret      || ''
+
+const PINECONE_ENV = `export PINECONE_PROXY_URL='${PROXY_URL}'
+export PINECONE_PROXY_TOKEN='${PROXY_TOKEN}'
+export VERCEL_PROTECTION_BYPASS='${VERCEL_BYPASS}'
 export TRADE_RUN_ID='${RUN_ID}'
 cd /home/user/ai-trading-claude`
 
@@ -286,9 +299,9 @@ Rules:
 
 === STEP 2: RUN build_sweep_payload.py ===
 \`\`\`bash
-export PINECONE_PROXY_URL='https://www.mga-pservices.cloud'
-export PINECONE_PROXY_TOKEN='88b1c18422f697855c9761457363c4ed62f6e934bd76b17d460919cd51137d50'
-export VERCEL_PROTECTION_BYPASS='2j5xvsJXIdjqO7SnLunMfTFB4H3XpRT2'
+export PINECONE_PROXY_URL='${PROXY_URL}'
+export PINECONE_PROXY_TOKEN='${PROXY_TOKEN}'
+export VERCEL_PROTECTION_BYPASS='${VERCEL_BYPASS}'
 python3 /home/user/ai-trading-claude/scripts/build_sweep_payload.py sweep \\
   --run-id ${RUN_ID} \\
   --in /tmp/sweep_inputs.json \\
@@ -307,7 +320,7 @@ If JSON > 3000 chars: use mcp__Slack__slack_create_canvas (title="Sweep Payload 
 === STEP 4: FIRE AUTOTRADER WEBHOOK ===
 Sign and POST with TWO headers (X-Webhook-Token AND X-Webhook-Signature):
 \`\`\`bash
-SECRET='m9g8WOwRJI3UOfY9SNTAkBGQtY_gFpB-v3OdbVqVVfg'
+SECRET='${WEBHOOK_SECRET}'
 SIG="sha256=$(openssl dgst -sha256 -hmac "$SECRET" < /tmp/sweep_payload.json | awk '{print $2}')"
 HTTP_CODE=$(curl -s -o /tmp/webhook_response.txt -w "%{http_code}" \\
   -X POST \\
@@ -315,7 +328,7 @@ HTTP_CODE=$(curl -s -o /tmp/webhook_response.txt -w "%{http_code}" \\
   -H "X-Webhook-Token: \${SECRET}" \\
   -H "X-Webhook-Signature: \${SIG}" \\
   --data-binary @/tmp/sweep_payload.json \\
-  https://unthawed-keshia-unplenteously.ngrok-free.dev/webhook/sweep)
+  ${WEBHOOK_URL}/webhook/sweep)
 echo "HTTP: \${HTTP_CODE}"
 cat /tmp/webhook_response.txt
 \`\`\`
