@@ -201,7 +201,11 @@ frontmatter so the memory layer can index it.
   intentional consequence of trade-quick's coarser signal grammar — the
   escalation matrix below must respect this projection to avoid spurious
   escalations every sweep on NEUTRAL-prior tickers.
-- `PRICE` — the dollar value on the `Price:` line.
+- `PRICE` — from the quote tool, NOT the model-written `Price:` line:
+  `python3 ~/.claude/skills/trade/scripts/trade_quote.py $T` → its `price`,
+  verbatim (Canadian listings need the suffix, e.g. `XIC.TO`). Only if it
+  returns `{"error": ...}` fall back to the `Price:` line and log
+  `[warn] $T: quote tool failed, using /trade quick price`.
 - `COMPANY` — the name on the header line (after the ticker, before the
   date).
 
@@ -553,10 +557,17 @@ linking the canvas. Slack failure → log `[warn] step-W slack`, non-fatal.
 
 **W3. Trigger the AutoTrader webhook.**
 
+The signing secret comes from the `AUTOTRADER_WEBHOOK_SECRET` env var (see
+`.env.example`; locally `set -a; source .env; set +a`). NEVER write the secret
+into this file, a prompt, or any output. If the var is unset, the webhook is
+skipped (non-fatal).
+
 ```python
 import json, hmac, hashlib, urllib.request, urllib.error, os, sys
 url    = 'https://unthawed-keshia-unplenteously.ngrok-free.dev'
-secret = 'm9g8WOwRJI3UOfY9SNTAkBGQtY_gFpB-v3OdbVqVVfg'
+secret = os.environ.get('AUTOTRADER_WEBHOOK_SECRET', '')
+if not secret:
+    print('WEBHOOK_HTTP=skipped: AUTOTRADER_WEBHOOK_SECRET not set'); sys.exit(0)
 if not os.path.exists('/tmp/sweep_payload.json'):
     print('WEBHOOK_HTTP=skipped: no valid payload'); sys.exit(0)
 body = open('/tmp/sweep_payload.json', 'rb').read()
@@ -580,7 +591,7 @@ except Exception as e:
 
 Expect `WEBHOOK_HTTP=202`. `400` = invalid payload (response body lists
 offending fields in a `"detail"` array — fix W1 and re-run). `401` = signature
-mismatch. `403` = tunnel host missing from env egress allowlist. ALL non-fatal;
+mismatch (`AUTOTRADER_WEBHOOK_SECRET` doesn't match the AutoTrader side). `403` = tunnel host missing from env egress allowlist. ALL non-fatal;
 record the result for Step 3.
 
 **Step 3 — Cloud summary line.** Append one line to the terminal

@@ -36,6 +36,15 @@ const DATE        = ARGS.date       ? ARGS.date       : '1970-01-01'
 const DATE_LABEL  = ARGS.dateLabel  ? ARGS.dateLabel  : DATE
 const DIGEST_FILE = ARGS.digestFile ? ARGS.digestFile : ('TRADE-ROUTINE-' + DATE.replace(/-/g,'') + '.md')
 const PRIORS      = ARGS.priors     ? ARGS.priors     : {}
+// Real run time (from RUN_ID 'routine-YYYYMMDD-HHMM-xxxxxx') so each run gets a
+// distinct Pinecone record ID (TICKER:ANALYSIS:YYYYMMDD-HHMM:...). A midnight
+// stamp made same-day reruns overwrite each other.
+const GENERATED_AT = (() => {
+  const m = /^routine-(\d{8})-(\d{2})(\d{2})-/.exec(RUN_ID)
+  return (m && m[1] === DATE.replace(/-/g, ''))
+    ? `${DATE}T${m[2]}:${m[3]}:00+00:00`
+    : `${DATE}T00:00:00+00:00`
+})()
 
 const CWD = '/home/user/ai-trading-claude'
 // Secrets injected via args.secrets (see header). Non-secret URLs keep a default;
@@ -69,7 +78,12 @@ const HOLDINGS = [
   {ticker:'XEQT',  company:'iShares Core Equity ETF Portfolio',                        assetType:'etf-ca', searchHint:'XEQT.TO TSX ETF'},
   {ticker:'YNVDA', company:'YieldMax NVDA Option Income Strategy ETF (NVDY)',          assetType:'etf',    searchHint:'NVDY YieldMax ETF'},
   {ticker:'ZAG',   company:'BMO Aggregate Bond Index ETF',                             assetType:'etf-ca', searchHint:'ZAG.TO TSX bond ETF'},
-].map(h => ({...h, prior: PRIORS[h.ticker] || 'NEUTRAL'}))
+].map(h => ({
+  ...h,
+  prior: PRIORS[h.ticker] || 'NEUTRAL',
+  // Yahoo symbol for trade_quote.py: TSX listings need .TO; YNVDA is really NVDY.
+  quoteSymbol: h.ticker === 'YNVDA' ? 'NVDY' : h.assetType === 'etf-ca' ? h.ticker + '.TO' : h.ticker,
+}))
 
 // ─── Schema ───────────────────────────────────────────────────────────────────
 const ANALYSIS_SCHEMA = {
@@ -95,12 +109,22 @@ const ANALYSIS_SCHEMA = {
     prior_score_recalled:  {type:['number','null']},
     file_written:          {type:'boolean'},
     ingest_ok:             {type:'boolean'},
+    ingest_error:          {type:['string','null']},
     analysis_summary:      {type:'string'},
   }
 }
 
 // ─── Per-ticker analysis prompt ───────────────────────────────────────────────
-function buildAnalysisPrompt(h) {
+function priceBlock(q) {
+  if (q && typeof q.price === 'number') {
+    return `CURRENT PRICE (authoritative, from quote tool ${q.source} as of ${q.as_of}): ${q.price} ${q.currency}
+Day change: ${q.change_pct}% | 52-week range: ${q.low_52w} – ${q.high_52w}
+Use ${q.price} EXACTLY as price_at_analysis and current_price. Do NOT search for or re-derive the price; base stop_loss and entry/exit levels on it.`
+  }
+  return `CURRENT PRICE: quote tool unavailable (${(q && q.error) || 'no quote'}). Find the price via WebSearch and add the line "⚠ Price from web search, not quote tool" at the top of the analysis body.`
+}
+
+function buildAnalysisPrompt(h, q) {
   const caNote = h.assetType === 'etf-ca'
     ? '\nIMPORTANT: This is a Canadian TSX ETF. Search with .TO suffix (e.g., ' + h.ticker + '.TO). Price is in CAD.'
     : ''
@@ -117,6 +141,7 @@ function buildAnalysisPrompt(h) {
 
 PRIOR SIGNAL (caller-provided, last known): ${h.prior}
 ANALYSIS DATE: ${DATE_LABEL}
+${priceBlock(q)}
 
 === STEP 0: RECALL PRIOR ANALYSIS FROM PINECONE (memory seed — do this FIRST, before searching) ===
 Pull this ticker's most recent prior ANALYSIS record from vector memory so today's review is continuity-aware:
@@ -132,7 +157,7 @@ Use any recalled prior as CONTEXT, not an anchor: today's web data governs the s
 
 === STEP 1: GATHER DATA (use WebSearch) ===
 Run 2-3 searches to find:
-- Current price, 52-week range, recent performance
+- Recent performance and trend (the price itself is given above; only search for it if the quote tool was unavailable)
 - Key metrics: ${fundamentalsHint}
 - Recent news (past 7 days) and analyst sentiment
 - Upcoming catalysts (earnings dates, events, macro)
@@ -196,7 +221,7 @@ schema_version: 1
 ticker: ${h.ticker}
 company: "${h.company}"
 report_type: ANALYSIS
-generated_at: ${DATE}T00:00:00+00:00
+generated_at: ${GENERATED_AT}
 generated_date: ${DATE}
 composite_score: <computed integer>
 technical_score: <integer>
@@ -206,7 +231,7 @@ risk_score: <integer>
 thesis_score: <integer>
 signal: <exact signal string>
 grade: <grade>
-price_at_analysis: <current price as float>
+price_at_analysis: <the CURRENT PRICE given above, verbatim, as float>
 stop_loss: <recommended stop-loss as float, or null>
 nearest_catalyst_date: <YYYY-MM-DD or null>
 catalysts:
@@ -229,16 +254,27 @@ Then write a comprehensive analysis body (400-600 words) organized:
 ### Entry/Exit Levels
 *DISCLAIMER: Educational and research purposes only. Not financial advice.*
 
-=== STEP 5: INGEST TO PINECONE (non-fatal) ===
-Run this bash command (non-zero exit is OK, just log it):
+=== STEP 5: SAVE TO PINECONE AND VERIFY (non-fatal, but report it truthfully) ===
+Run this bash command. It ingests (with one retry), then confirms that the record for THIS run is what trade_memory latest returns:
 \`\`\`bash
 ${PINECONE_ENV}
-python3 ~/.claude/skills/trade/scripts/trade_memory.py ingest TRADE-ANALYSIS-${h.ticker}.md 2>&1 | tail -5
+ok=no
+for i in 1 2; do
+  if python3 ~/.claude/skills/trade/scripts/trade_memory.py ingest TRADE-ANALYSIS-${h.ticker}.md > /tmp/ingest-${h.ticker}.log 2>&1 \\
+     && python3 ~/.claude/skills/trade/scripts/trade_memory.py latest ${h.ticker} --type ANALYSIS 2>/dev/null | grep -q '"run_id": "${RUN_ID}"'; then
+    ok=yes; break
+  fi
+  sleep 5
+done
+echo "MEMORY_SAVED=$ok"
+tail -5 /tmp/ingest-${h.ticker}.log
 \`\`\`
+Set ingest_ok=true ONLY if the output contains MEMORY_SAVED=yes. Otherwise set ingest_ok=false and put the reason in ingest_error (last ingest log line, or "verify mismatch").
+If the Bash call itself is denied or blocked, retry the exact same command once; if it is blocked again, set ingest_ok=false and ingest_error="bash blocked: <reason>". Never report ingest_ok=true without seeing MEMORY_SAVED=yes.
 
 === STEP 6: RETURN STRUCTURED RESULT ===
 Return structured JSON with all scores, signal, grade, current_price, stop_loss, nearest_catalyst_date, nearest_catalyst_event.
-Set file_written=true if Write tool succeeded, ingest_ok=true if ingest returned exit code 0.
+Set file_written=true if Write tool succeeded; ingest_ok / ingest_error exactly as STEP 5 defines.
 Also include the STEP 0 memory fields: memory_hit (true/false), and prior_signal_recalled / prior_score_recalled (the recalled prior's signal and composite score when memory_hit=true, else null).
 
 Today is ${DATE_LABEL}. Use only real data from web searches.
@@ -247,10 +283,33 @@ DISCLAIMER: Educational and research purposes only. Not financial advice.`
 
 // ─── Phase 1: 14 parallel analyses ───────────────────────────────────────────
 phase('Analyze')
+
+// Quotes come from trade_quote.py, not from the model: one agent runs the script
+// once for all symbols and hands back its JSON stdout untouched.
+const QUOTE_SYMBOLS = HOLDINGS.map(h => h.quoteSymbol)
+const quoteRun = await agent(`Run this exact bash command and return its stdout (a JSON object) as the "quotes_json" string, unmodified. Do not edit, round, or fill in any values.
+\`\`\`bash
+python3 ${CWD}/scripts/trade_quote.py ${QUOTE_SYMBOLS.join(' ')}
+\`\`\`
+If the command fails or prints nothing, return quotes_json="{}".`, {
+  label: 'quotes',
+  phase: 'Analyze',
+  schema: {type: 'object', required: ['quotes_json'], properties: {quotes_json: {type: 'string'}}},
+})
+let QUOTES = {}
+try { QUOTES = JSON.parse((quoteRun && quoteRun.quotes_json) || '{}') || {} } catch (_e) { QUOTES = {} }
+const quoteOf = h => QUOTES[h.quoteSymbol]
+const quotedOk = HOLDINGS.filter(h => typeof (quoteOf(h) || {}).price === 'number')
+log('quotes: ' + quotedOk.length + '/' + HOLDINGS.length +
+  (quotedOk.length < HOLDINGS.length
+    ? ' — missing: ' + HOLDINGS.filter(h => !quotedOk.includes(h)).map(h => h.quoteSymbol).join(', ') +
+      (quotedOk.length === 0 ? ' (all failed: is query1.finance.yahoo.com in the env allowlist?)' : '')
+    : ''))
+
 log('Launching 14 parallel ticker analyses for run ' + RUN_ID + '...')
 
 const rawAnalyses = await parallel(HOLDINGS.map(h => () =>
-  agent(buildAnalysisPrompt(h), {
+  agent(buildAnalysisPrompt(h, quoteOf(h)), {
     label: 'analyze:' + h.ticker,
     phase: 'Analyze',
     schema: ANALYSIS_SCHEMA,
@@ -267,7 +326,18 @@ if (analyses.length === 0) {
 }
 
 const priorByTicker = {}
-for (const h of HOLDINGS) { priorByTicker[h.ticker] = h.prior }
+const holdingByTicker = {}
+for (const h of HOLDINGS) { priorByTicker[h.ticker] = h.prior; holdingByTicker[h.ticker] = h }
+
+// Price in the payload/digest comes from the quote tool, never the agent;
+// the agent's own value is used only when the quote failed.
+function tickerPrice(a) {
+  const h = holdingByTicker[a.ticker]
+  const q = h && quoteOf(h)
+  if (q && typeof q.price === 'number') return String(q.price)
+  if (a.current_price) log('[warn] ' + a.ticker + ': no quote, using agent-reported price ' + a.current_price)
+  return a.current_price || null
+}
 
 // ─── Phase 2: Deliver ─────────────────────────────────────────────────────────
 phase('Deliver')
@@ -280,7 +350,7 @@ const analysisSummary = analyses.map(a => ({
   new_signal:            a.signal,
   composite_score:       a.composite_score,
   grade:                 a.grade,
-  current_price:         a.current_price || null,
+  current_price:         tickerPrice(a),
   stop_loss:             a.stop_loss || null,
   nearest_catalyst_date: a.nearest_catalyst_date || null,
   nearest_catalyst_event:a.nearest_catalyst_event || null,
@@ -290,6 +360,23 @@ const analysisSummary = analyses.map(a => ({
 const filesWritten   = analysisSummary.filter(a => a.file_written).length
 const changedSignals = analysisSummary.filter(a => a.new_signal !== a.prior_signal)
 log(filesWritten + ' TRADE-ANALYSIS files written')
+
+// Memory save status is computed here from each agent's verified STEP 5
+// result, not left to the delivery agent. An unsaved ticker means the next
+// run recalls a stale prior, so it must be visible in the digest and Slack.
+const analyzedTickers = new Set(analyses.map(a => a.ticker))
+const notAnalyzed = HOLDINGS.filter(h => !analyzedTickers.has(h.ticker)).map(h => h.ticker)
+const notSaved = analyses.filter(a => !a.ingest_ok).map(a => ({ticker: a.ticker, reason: a.ingest_error || 'no reason reported'}))
+const savedCount = analyses.length - notSaved.length
+log('memory: ' + savedCount + '/' + HOLDINGS.length + ' saved to Pinecone (verified)' +
+  (notSaved.length ? ' — NOT saved: ' + notSaved.map(n => n.ticker + ' (' + n.reason + ')').join('; ') : '') +
+  (notAnalyzed.length ? ' — analysis failed: ' + notAnalyzed.join(', ') : ''))
+const memorySection = (notSaved.length || notAnalyzed.length)
+  ? `⚠ ${savedCount}/${HOLDINGS.length} saved to memory. The next run will recall an older prior for these:\n` +
+    notSaved.map(n => `- ${n.ticker}: not saved (${n.reason})`).join('\n') +
+    (notSaved.length && notAnalyzed.length ? '\n' : '') +
+    notAnalyzed.map(t => `- ${t}: analysis failed, nothing saved`).join('\n')
+  : `✅ ${savedCount}/${HOLDINGS.length} saved to memory (verified).`
 log(changedSignals.length + ' signal changes: ' + changedSignals.map(a => a.ticker + ':' + a.prior_signal + '->' + a.new_signal).join(', '))
 
 const deliverPrompt = `You are executing Step W (AutoTrader webhook delivery) for portfolio routine ${RUN_ID}.
@@ -372,6 +459,9 @@ webhook_status: [HTTP code or FAILED]
 ## Upcoming Catalysts
 [catalyst table: Ticker | Date | Event]
 
+## Memory (Pinecone)
+${memorySection}
+
 ## Webhook
 [HTTP status and timestamp]
 
@@ -381,8 +471,10 @@ webhook_status: [HTTP code or FAILED]
 *DISCLAIMER: Educational research only. Not financial advice.*
 \`\`\`
 
+Copy the "## Memory (Pinecone)" section EXACTLY as given above; do not rewrite or drop it.
+
 === STEP 6: POST DIGEST TO SLACK ===
-Read ${DIGEST_FILE}.
+Read ${DIGEST_FILE}. The Memory section must appear in what you post.
 - ≤3000 chars: mcp__Slack__slack_send_message to channel_id="C0B712ARA7M"
 - >3000 chars: mcp__Slack__slack_create_canvas (channel_id="C0B712ARA7M", title="Portfolio Routine ${DATE}")
 
@@ -401,6 +493,7 @@ Use mcp__Google-Drive__create_file:
 - [✅/❌] Routine digest written
 - [✅/❌] Slack digest posted
 - [✅/❌] Drive uploaded
+- Memory: ${savedCount}/${HOLDINGS.length} saved${notSaved.length || notAnalyzed.length ? ' (NOT saved: ' + notSaved.map(n => n.ticker).concat(notAnalyzed).join(', ') + ')' : ''}
 
 Today is ${DATE_LABEL}. Educational/research only. Not financial advice.`
 
@@ -413,5 +506,8 @@ return {
   run_id:           RUN_ID,
   analyses_completed: analyses.length,
   signal_changes:   changedSignals.length,
+  memory_saved:     savedCount + '/' + HOLDINGS.length,
+  memory_not_saved: notSaved,
+  analysis_failed:  notAnalyzed,
   delivery_result:  delivery,
 }
