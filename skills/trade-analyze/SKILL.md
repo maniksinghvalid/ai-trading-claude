@@ -21,16 +21,19 @@ Before launching any agents, YOU must gather the foundational data they all need
 
 **Step 1 — Current Price & Market Context**
 
-Use WebSearch to find:
-- Current stock price for TICKER
-- Today's price change (dollar and percentage)
+FIRST, get the price from the quote tool (Canadian listings need the suffix, e.g. `XIC.TO`):
+```bash
+python3 ~/.claude/skills/trade/scripts/trade_quote.py <TICKER>
+```
+Its `price`, `change_pct`, `high_52w`, `low_52w`, `currency`, and `as_of` are **authoritative**: copy them verbatim into the DISCOVERY_BRIEF, labeled "from quote tool — do not re-derive", and use `price` exactly as `price_at_analysis`. Never replace them with a number from a search snippet. If the tool returns `{"error": ...}` (or can't run), fall back to WebSearch for price and 52-week range, and put this line near the top of the report body: `⚠ Price from web search, not quote tool (<error>)`.
+
+Then use WebSearch only for the context the quote doesn't cover:
 - Market cap and cap category (Large/Mid/Small/Micro)
 - Average daily volume
-- 52-week high and 52-week low
 - Sector and industry classification
 - S&P 500 / relevant index performance for context
 
-Search query pattern: `"<TICKER> stock price today market cap 2026"`
+Search query pattern: `"<TICKER> market cap sector 2026"`
 
 **Step 2 — Company Overview**
 
@@ -451,7 +454,7 @@ risk_score: <int 0-100, from Agent 4 — INVERTED, higher = safer>
 thesis_score: <int 0-100, from Agent 5>
 signal: <STRONG BUY|BUY|HOLD|NEUTRAL|CAUTION|AVOID>   # derived from composite_score
 grade: <A+|A|B|C|D|F>                                   # derived from composite_score
-price_at_analysis: <float, USD — current stock price from Phase 1>
+price_at_analysis: <float — the quote tool's `price` from Phase 1, verbatim>
 price_target: <float, USD — Target 1 from the Entry/Exit Strategy table>
 stop_loss: <float, USD — Stop Loss from the Entry/Exit Strategy table>
 catalysts: ["<event> <date>", "<event> <date>"]

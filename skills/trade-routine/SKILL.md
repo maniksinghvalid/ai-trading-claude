@@ -201,7 +201,11 @@ frontmatter so the memory layer can index it.
   intentional consequence of trade-quick's coarser signal grammar — the
   escalation matrix below must respect this projection to avoid spurious
   escalations every sweep on NEUTRAL-prior tickers.
-- `PRICE` — the dollar value on the `Price:` line.
+- `PRICE` — from the quote tool, NOT the model-written `Price:` line:
+  `python3 ~/.claude/skills/trade/scripts/trade_quote.py $T` → its `price`,
+  verbatim (Canadian listings need the suffix, e.g. `XIC.TO`). Only if it
+  returns `{"error": ...}` fall back to the `Price:` line and log
+  `[warn] $T: quote tool failed, using /trade quick price`.
 - `COMPANY` — the name on the header line (after the ticker, before the
   date).
 

@@ -11,7 +11,7 @@ This file provides guidance to Claude Code (claude.ai/code) when working with co
 
 This is the **source** for a Claude Code plugin — a suite of trading-research skills and subagents. Most files are Markdown *prompts* (SKILL.md / agent definitions), not application code. Two executable surfaces exist: `scripts/generate_trade_pdf.py` (local PDF generator) and `proxy/` (a Vercel Python project — separate Vercel root dir — that fronts Pinecone for the memory skills; has its own `requirements.txt` and `vercel.json`, deploys on push to main).
 
-It is a research/analysis tool: given a ticker, it gathers public data via WebSearch/WebFetch and produces scored analysis. It does **not** connect to brokerages, use market-data APIs/keys, or execute trades. Every output must carry the educational/not-financial-advice disclaimer.
+It is a research/analysis tool: given a ticker, it gathers public data via WebSearch/WebFetch and produces scored analysis. It does **not** connect to brokerages, use keyed market-data APIs, or execute trades. The one exception is price: `scripts/trade_quote.py` reads a keyless public quote endpoint (Yahoo chart), and `trade-analyze`, `trade-options`, and the routine treat that price as authoritative instead of having the model transcribe one. Every output must carry the educational/not-financial-advice disclaimer.
 
 **Editing files here does nothing to the live tool until you run `./install.sh`**, which copies sources into `~/.claude/`:
 - `trade/SKILL.md` + `skills/<name>/SKILL.md` → `~/.claude/skills/`

@@ -43,11 +43,17 @@ outlook for strategy *filtering*, but the record's `strategy_outlook` /
 ## Data Collection Phase
 
 ### Step 1: Current Stock Price & Context
+FIRST, get the price from the quote tool (Canadian listings need the suffix, e.g. `XIC.TO`):
+```bash
+python3 ~/.claude/skills/trade/scripts/trade_quote.py <TICKER>
 ```
-WebSearch: "<TICKER> stock price today market cap earnings date"
+Its `price`, `high_52w`/`low_52w`, and `currency` are **authoritative**. Use `price` verbatim as `price_at_analysis` and as the "current" reference for every strike, breakeven, max-pain "vs Current" %, and P/L row. Never substitute a number from a search snippet. If the tool returns `{"error": ...}` (or can't run), fall back to WebSearch for price and 52-week range, and put this line under the report header: `⚠ Price from web search, not quote tool (<error>)`.
+
+```
+WebSearch: "<TICKER> market cap earnings date"
 WebSearch: "<TICKER> stock technical analysis support resistance trend"
 ```
-Extract: current price, 52-week range, key support/resistance levels, next earnings date, recent trend direction.
+Extract: key support/resistance levels, market cap, next earnings date, recent trend direction.
 
 ### Step 2: Implied Volatility Data
 ```
@@ -215,7 +221,7 @@ company: <COMPANY NAME>
 report_type: OPTIONS
 generated_at: <ISO-8601 timestamp with tz offset>
 signal: <inherited ANALYZE_SIGNAL — one of STRONG BUY|BUY|HOLD|NEUTRAL|CAUTION|AVOID; omit the line if unknown>
-price_at_analysis: <current price as a number>
+price_at_analysis: <the quote tool's `price` from Step 1, verbatim>
 iv_rank: <0-100 integer; omit the line if IV rank could not be found>
 strategy_outlook: <BULLISH|BEARISH|NEUTRAL|INCOME|HEDGE>
 recommended_strategy: <primary strategy name, e.g. "Covered Call">

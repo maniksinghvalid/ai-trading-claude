@@ -69,7 +69,12 @@ const HOLDINGS = [
   {ticker:'XEQT',  company:'iShares Core Equity ETF Portfolio',                        assetType:'etf-ca', searchHint:'XEQT.TO TSX ETF'},
   {ticker:'YNVDA', company:'YieldMax NVDA Option Income Strategy ETF (NVDY)',          assetType:'etf',    searchHint:'NVDY YieldMax ETF'},
   {ticker:'ZAG',   company:'BMO Aggregate Bond Index ETF',                             assetType:'etf-ca', searchHint:'ZAG.TO TSX bond ETF'},
-].map(h => ({...h, prior: PRIORS[h.ticker] || 'NEUTRAL'}))
+].map(h => ({
+  ...h,
+  prior: PRIORS[h.ticker] || 'NEUTRAL',
+  // Yahoo symbol for trade_quote.py: TSX listings need .TO; YNVDA is really NVDY.
+  quoteSymbol: h.ticker === 'YNVDA' ? 'NVDY' : h.assetType === 'etf-ca' ? h.ticker + '.TO' : h.ticker,
+}))
 
 // ─── Schema ───────────────────────────────────────────────────────────────────
 const ANALYSIS_SCHEMA = {
@@ -100,7 +105,16 @@ const ANALYSIS_SCHEMA = {
 }
 
 // ─── Per-ticker analysis prompt ───────────────────────────────────────────────
-function buildAnalysisPrompt(h) {
+function priceBlock(q) {
+  if (q && typeof q.price === 'number') {
+    return `CURRENT PRICE (authoritative, from quote tool ${q.source} as of ${q.as_of}): ${q.price} ${q.currency}
+Day change: ${q.change_pct}% | 52-week range: ${q.low_52w} – ${q.high_52w}
+Use ${q.price} EXACTLY as price_at_analysis and current_price. Do NOT search for or re-derive the price; base stop_loss and entry/exit levels on it.`
+  }
+  return `CURRENT PRICE: quote tool unavailable (${(q && q.error) || 'no quote'}). Find the price via WebSearch and add the line "⚠ Price from web search, not quote tool" at the top of the analysis body.`
+}
+
+function buildAnalysisPrompt(h, q) {
   const caNote = h.assetType === 'etf-ca'
     ? '\nIMPORTANT: This is a Canadian TSX ETF. Search with .TO suffix (e.g., ' + h.ticker + '.TO). Price is in CAD.'
     : ''
@@ -117,6 +131,7 @@ function buildAnalysisPrompt(h) {
 
 PRIOR SIGNAL (caller-provided, last known): ${h.prior}
 ANALYSIS DATE: ${DATE_LABEL}
+${priceBlock(q)}
 
 === STEP 0: RECALL PRIOR ANALYSIS FROM PINECONE (memory seed — do this FIRST, before searching) ===
 Pull this ticker's most recent prior ANALYSIS record from vector memory so today's review is continuity-aware:
@@ -132,7 +147,7 @@ Use any recalled prior as CONTEXT, not an anchor: today's web data governs the s
 
 === STEP 1: GATHER DATA (use WebSearch) ===
 Run 2-3 searches to find:
-- Current price, 52-week range, recent performance
+- Recent performance and trend (the price itself is given above; only search for it if the quote tool was unavailable)
 - Key metrics: ${fundamentalsHint}
 - Recent news (past 7 days) and analyst sentiment
 - Upcoming catalysts (earnings dates, events, macro)
@@ -206,7 +221,7 @@ risk_score: <integer>
 thesis_score: <integer>
 signal: <exact signal string>
 grade: <grade>
-price_at_analysis: <current price as float>
+price_at_analysis: <the CURRENT PRICE given above, verbatim, as float>
 stop_loss: <recommended stop-loss as float, or null>
 nearest_catalyst_date: <YYYY-MM-DD or null>
 catalysts:
@@ -247,10 +262,33 @@ DISCLAIMER: Educational and research purposes only. Not financial advice.`
 
 // ─── Phase 1: 14 parallel analyses ───────────────────────────────────────────
 phase('Analyze')
+
+// Quotes come from trade_quote.py, not from the model: one agent runs the script
+// once for all symbols and hands back its JSON stdout untouched.
+const QUOTE_SYMBOLS = HOLDINGS.map(h => h.quoteSymbol)
+const quoteRun = await agent(`Run this exact bash command and return its stdout (a JSON object) as the "quotes_json" string, unmodified. Do not edit, round, or fill in any values.
+\`\`\`bash
+python3 ${CWD}/scripts/trade_quote.py ${QUOTE_SYMBOLS.join(' ')}
+\`\`\`
+If the command fails or prints nothing, return quotes_json="{}".`, {
+  label: 'quotes',
+  phase: 'Analyze',
+  schema: {type: 'object', required: ['quotes_json'], properties: {quotes_json: {type: 'string'}}},
+})
+let QUOTES = {}
+try { QUOTES = JSON.parse((quoteRun && quoteRun.quotes_json) || '{}') || {} } catch (_e) { QUOTES = {} }
+const quoteOf = h => QUOTES[h.quoteSymbol]
+const quotedOk = HOLDINGS.filter(h => typeof (quoteOf(h) || {}).price === 'number')
+log('quotes: ' + quotedOk.length + '/' + HOLDINGS.length +
+  (quotedOk.length < HOLDINGS.length
+    ? ' — missing: ' + HOLDINGS.filter(h => !quotedOk.includes(h)).map(h => h.quoteSymbol).join(', ') +
+      (quotedOk.length === 0 ? ' (all failed: is query1.finance.yahoo.com in the env allowlist?)' : '')
+    : ''))
+
 log('Launching 14 parallel ticker analyses for run ' + RUN_ID + '...')
 
 const rawAnalyses = await parallel(HOLDINGS.map(h => () =>
-  agent(buildAnalysisPrompt(h), {
+  agent(buildAnalysisPrompt(h, quoteOf(h)), {
     label: 'analyze:' + h.ticker,
     phase: 'Analyze',
     schema: ANALYSIS_SCHEMA,
@@ -267,7 +305,18 @@ if (analyses.length === 0) {
 }
 
 const priorByTicker = {}
-for (const h of HOLDINGS) { priorByTicker[h.ticker] = h.prior }
+const holdingByTicker = {}
+for (const h of HOLDINGS) { priorByTicker[h.ticker] = h.prior; holdingByTicker[h.ticker] = h }
+
+// Price in the payload/digest comes from the quote tool, never the agent;
+// the agent's own value is used only when the quote failed.
+function tickerPrice(a) {
+  const h = holdingByTicker[a.ticker]
+  const q = h && quoteOf(h)
+  if (q && typeof q.price === 'number') return String(q.price)
+  if (a.current_price) log('[warn] ' + a.ticker + ': no quote, using agent-reported price ' + a.current_price)
+  return a.current_price || null
+}
 
 // ─── Phase 2: Deliver ─────────────────────────────────────────────────────────
 phase('Deliver')
@@ -280,7 +329,7 @@ const analysisSummary = analyses.map(a => ({
   new_signal:            a.signal,
   composite_score:       a.composite_score,
   grade:                 a.grade,
-  current_price:         a.current_price || null,
+  current_price:         tickerPrice(a),
   stop_loss:             a.stop_loss || null,
   nearest_catalyst_date: a.nearest_catalyst_date || null,
   nearest_catalyst_event:a.nearest_catalyst_event || null,
