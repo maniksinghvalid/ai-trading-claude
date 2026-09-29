@@ -36,6 +36,15 @@ const DATE        = ARGS.date       ? ARGS.date       : '1970-01-01'
 const DATE_LABEL  = ARGS.dateLabel  ? ARGS.dateLabel  : DATE
 const DIGEST_FILE = ARGS.digestFile ? ARGS.digestFile : ('TRADE-ROUTINE-' + DATE.replace(/-/g,'') + '.md')
 const PRIORS      = ARGS.priors     ? ARGS.priors     : {}
+// Real run time (from RUN_ID 'routine-YYYYMMDD-HHMM-xxxxxx') so each run gets a
+// distinct Pinecone record ID (TICKER:ANALYSIS:YYYYMMDD-HHMM:...). A midnight
+// stamp made same-day reruns overwrite each other.
+const GENERATED_AT = (() => {
+  const m = /^routine-(\d{8})-(\d{2})(\d{2})-/.exec(RUN_ID)
+  return (m && m[1] === DATE.replace(/-/g, ''))
+    ? `${DATE}T${m[2]}:${m[3]}:00+00:00`
+    : `${DATE}T00:00:00+00:00`
+})()
 
 const CWD = '/home/user/ai-trading-claude'
 // Secrets injected via args.secrets (see header). Non-secret URLs keep a default;
@@ -100,6 +109,7 @@ const ANALYSIS_SCHEMA = {
     prior_score_recalled:  {type:['number','null']},
     file_written:          {type:'boolean'},
     ingest_ok:             {type:'boolean'},
+    ingest_error:          {type:['string','null']},
     analysis_summary:      {type:'string'},
   }
 }
@@ -211,7 +221,7 @@ schema_version: 1
 ticker: ${h.ticker}
 company: "${h.company}"
 report_type: ANALYSIS
-generated_at: ${DATE}T00:00:00+00:00
+generated_at: ${GENERATED_AT}
 generated_date: ${DATE}
 composite_score: <computed integer>
 technical_score: <integer>
@@ -244,16 +254,27 @@ Then write a comprehensive analysis body (400-600 words) organized:
 ### Entry/Exit Levels
 *DISCLAIMER: Educational and research purposes only. Not financial advice.*
 
-=== STEP 5: INGEST TO PINECONE (non-fatal) ===
-Run this bash command (non-zero exit is OK, just log it):
+=== STEP 5: SAVE TO PINECONE AND VERIFY (non-fatal, but report it truthfully) ===
+Run this bash command. It ingests (with one retry), then confirms that the record for THIS run is what trade_memory latest returns:
 \`\`\`bash
 ${PINECONE_ENV}
-python3 ~/.claude/skills/trade/scripts/trade_memory.py ingest TRADE-ANALYSIS-${h.ticker}.md 2>&1 | tail -5
+ok=no
+for i in 1 2; do
+  if python3 ~/.claude/skills/trade/scripts/trade_memory.py ingest TRADE-ANALYSIS-${h.ticker}.md > /tmp/ingest-${h.ticker}.log 2>&1 \\
+     && python3 ~/.claude/skills/trade/scripts/trade_memory.py latest ${h.ticker} --type ANALYSIS 2>/dev/null | grep -q '"run_id": "${RUN_ID}"'; then
+    ok=yes; break
+  fi
+  sleep 5
+done
+echo "MEMORY_SAVED=$ok"
+tail -5 /tmp/ingest-${h.ticker}.log
 \`\`\`
+Set ingest_ok=true ONLY if the output contains MEMORY_SAVED=yes. Otherwise set ingest_ok=false and put the reason in ingest_error (last ingest log line, or "verify mismatch").
+If the Bash call itself is denied or blocked, retry the exact same command once; if it is blocked again, set ingest_ok=false and ingest_error="bash blocked: <reason>". Never report ingest_ok=true without seeing MEMORY_SAVED=yes.
 
 === STEP 6: RETURN STRUCTURED RESULT ===
 Return structured JSON with all scores, signal, grade, current_price, stop_loss, nearest_catalyst_date, nearest_catalyst_event.
-Set file_written=true if Write tool succeeded, ingest_ok=true if ingest returned exit code 0.
+Set file_written=true if Write tool succeeded; ingest_ok / ingest_error exactly as STEP 5 defines.
 Also include the STEP 0 memory fields: memory_hit (true/false), and prior_signal_recalled / prior_score_recalled (the recalled prior's signal and composite score when memory_hit=true, else null).
 
 Today is ${DATE_LABEL}. Use only real data from web searches.
@@ -339,6 +360,23 @@ const analysisSummary = analyses.map(a => ({
 const filesWritten   = analysisSummary.filter(a => a.file_written).length
 const changedSignals = analysisSummary.filter(a => a.new_signal !== a.prior_signal)
 log(filesWritten + ' TRADE-ANALYSIS files written')
+
+// Memory save status is computed here from each agent's verified STEP 5
+// result, not left to the delivery agent. An unsaved ticker means the next
+// run recalls a stale prior, so it must be visible in the digest and Slack.
+const analyzedTickers = new Set(analyses.map(a => a.ticker))
+const notAnalyzed = HOLDINGS.filter(h => !analyzedTickers.has(h.ticker)).map(h => h.ticker)
+const notSaved = analyses.filter(a => !a.ingest_ok).map(a => ({ticker: a.ticker, reason: a.ingest_error || 'no reason reported'}))
+const savedCount = analyses.length - notSaved.length
+log('memory: ' + savedCount + '/' + HOLDINGS.length + ' saved to Pinecone (verified)' +
+  (notSaved.length ? ' — NOT saved: ' + notSaved.map(n => n.ticker + ' (' + n.reason + ')').join('; ') : '') +
+  (notAnalyzed.length ? ' — analysis failed: ' + notAnalyzed.join(', ') : ''))
+const memorySection = (notSaved.length || notAnalyzed.length)
+  ? `⚠ ${savedCount}/${HOLDINGS.length} saved to memory. The next run will recall an older prior for these:\n` +
+    notSaved.map(n => `- ${n.ticker}: not saved (${n.reason})`).join('\n') +
+    (notSaved.length && notAnalyzed.length ? '\n' : '') +
+    notAnalyzed.map(t => `- ${t}: analysis failed, nothing saved`).join('\n')
+  : `✅ ${savedCount}/${HOLDINGS.length} saved to memory (verified).`
 log(changedSignals.length + ' signal changes: ' + changedSignals.map(a => a.ticker + ':' + a.prior_signal + '->' + a.new_signal).join(', '))
 
 const deliverPrompt = `You are executing Step W (AutoTrader webhook delivery) for portfolio routine ${RUN_ID}.
@@ -421,6 +459,9 @@ webhook_status: [HTTP code or FAILED]
 ## Upcoming Catalysts
 [catalyst table: Ticker | Date | Event]
 
+## Memory (Pinecone)
+${memorySection}
+
 ## Webhook
 [HTTP status and timestamp]
 
@@ -430,8 +471,10 @@ webhook_status: [HTTP code or FAILED]
 *DISCLAIMER: Educational research only. Not financial advice.*
 \`\`\`
 
+Copy the "## Memory (Pinecone)" section EXACTLY as given above; do not rewrite or drop it.
+
 === STEP 6: POST DIGEST TO SLACK ===
-Read ${DIGEST_FILE}.
+Read ${DIGEST_FILE}. The Memory section must appear in what you post.
 - ≤3000 chars: mcp__Slack__slack_send_message to channel_id="C0B712ARA7M"
 - >3000 chars: mcp__Slack__slack_create_canvas (channel_id="C0B712ARA7M", title="Portfolio Routine ${DATE}")
 
@@ -450,6 +493,7 @@ Use mcp__Google-Drive__create_file:
 - [✅/❌] Routine digest written
 - [✅/❌] Slack digest posted
 - [✅/❌] Drive uploaded
+- Memory: ${savedCount}/${HOLDINGS.length} saved${notSaved.length || notAnalyzed.length ? ' (NOT saved: ' + notSaved.map(n => n.ticker).concat(notAnalyzed).join(', ') + ')' : ''}
 
 Today is ${DATE_LABEL}. Educational/research only. Not financial advice.`
 
@@ -462,5 +506,8 @@ return {
   run_id:           RUN_ID,
   analyses_completed: analyses.length,
   signal_changes:   changedSignals.length,
+  memory_saved:     savedCount + '/' + HOLDINGS.length,
+  memory_not_saved: notSaved,
+  analysis_failed:  notAnalyzed,
   delivery_result:  delivery,
 }
