@@ -60,7 +60,14 @@ const PINECONE_ENV = `export PINECONE_PROXY_URL='${PROXY_URL}'
 export PINECONE_PROXY_TOKEN='${PROXY_TOKEN}'
 export VERCEL_PROTECTION_BYPASS='${VERCEL_BYPASS}'
 export TRADE_RUN_ID='${RUN_ID}'
+export PYTHONPATH="$HOME/.trade-deps\${PYTHONPATH:+:$PYTHONPATH}"
 cd /home/user/ai-trading-claude`
+
+// trade_memory.py's deps (pydantic, pinecone) go in a private --target dir, installed once
+// before the fan-out. The 14 parallel agents share root site-packages; any agent pip-
+// reinstalling pydantic there mid-run broke every concurrent import (ArgsKwargs /
+// "No module named 'pydantic'"). PINECONE_ENV puts this dir first on PYTHONPATH.
+const DEPS_INSTALL = `pip3 install --quiet --upgrade --target "$HOME/.trade-deps" 'pinecone>=7.3,<8' 'pydantic>=2' >/tmp/trade-deps.log 2>&1 || true`
 
 // ─── Holdings — prior signals come from args.priors (default: NEUTRAL) ────────
 const HOLDINGS = [
@@ -142,6 +149,8 @@ function buildAnalysisPrompt(h, q) {
 PRIOR SIGNAL (caller-provided, last known): ${h.prior}
 ANALYSIS DATE: ${DATE_LABEL}
 ${priceBlock(q)}
+
+NEVER run pip/pip3 install, uninstall, or upgrade in this sandbox. Other analyses run concurrently and share the same Python packages. If a script errors, report the error; do not repair the environment.
 
 === STEP 0: RECALL PRIOR ANALYSIS FROM PINECONE (memory seed — do this FIRST, before searching) ===
 Pull this ticker's most recent prior ANALYSIS record from vector memory so today's review is continuity-aware:
@@ -289,6 +298,7 @@ phase('Analyze')
 const QUOTE_SYMBOLS = HOLDINGS.map(h => h.quoteSymbol)
 const quoteRun = await agent(`Run this exact bash command and return its stdout (a JSON object) as the "quotes_json" string, unmodified. Do not edit, round, or fill in any values.
 \`\`\`bash
+${DEPS_INSTALL}
 python3 ${CWD}/scripts/trade_quote.py ${QUOTE_SYMBOLS.join(' ')}
 \`\`\`
 If the command fails or prints nothing, return quotes_json="{}".`, {
