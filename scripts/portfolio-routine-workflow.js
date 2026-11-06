@@ -67,7 +67,9 @@ cd /home/user/ai-trading-claude`
 // before the fan-out. The 14 parallel agents share root site-packages; any agent pip-
 // reinstalling pydantic there mid-run broke every concurrent import (ArgsKwargs /
 // "No module named 'pydantic'"). PINECONE_ENV puts this dir first on PYTHONPATH.
-const DEPS_INSTALL = `pip3 install --quiet --upgrade --target "$HOME/.trade-deps" 'pinecone>=7.3,<8' 'pydantic>=2' >/tmp/trade-deps.log 2>&1 || true`
+// `python3 -m pip`, never `pip3`: in the cloud image python3 is 3.11 but pip3 runs under
+// 3.13, so pip3 fetches cp313 pydantic_core wheels that python3 can't load (ArgsKwargs).
+const DEPS_INSTALL = `python3 -m pip install --quiet --upgrade --target "$HOME/.trade-deps" 'pinecone>=7.3,<8' 'pydantic>=2' >/tmp/trade-deps.log 2>&1 || true`
 
 // ─── Holdings — prior signals come from args.priors (default: NEUTRAL) ────────
 const HOLDINGS = [
