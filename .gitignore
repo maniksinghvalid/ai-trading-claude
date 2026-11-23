@@ -3,6 +3,7 @@
 !scripts/*.json
 !proxy/vercel.json
 !.planning/config.json
+!.claude/settings.json
 # Postman proxy collection: commit the templates (placeholder token only),
 # but keep any local env holding the REAL bearer ignored.
 !proxy/postman/pinecone-proxy.postman_collection.json
